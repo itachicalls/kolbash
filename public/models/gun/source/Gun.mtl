@@ -1,0 +1,47 @@
+# 3ds Max Wavefront OBJ Exporter v0.97b - (c)2007 guruware
+# File Created: 29.01.2015 13:36:35
+
+newmtl Material__180
+	Ns 10.000000000000
+	Ni 1.500000000000
+	d 1.000000000000
+	Tr 0.000000000000
+	Tf 1.000000000000 1.000000000000 1.000000000000 
+	illum 2
+	Ka 0.587999999523 0.587999999523 0.587999999523
+	Kd 0.587999999523 0.587999999523 0.587999999523
+	Ks 0.293999999762 0.293999999762 0.293999999762
+	Ke 0.000000000000 0.000000000000 0.000000000000
+	map_Ka C:\Users\Dries\Documents\1_DAE\S3\Game Art Pipeline\06_Final\Final\GAP_Examen_DriesDeryckere\GAP_Examen_Scope_albedo_DriesDeryckere_2DAE-GG2.png
+	map_Kd C:\Users\Dries\Documents\1_DAE\S3\Game Art Pipeline\06_Final\Final\GAP_Examen_DriesDeryckere\GAP_Examen_Scope_albedo_DriesDeryckere_2DAE-GG2.png
+	map_bump Map__8_Normal_Bump.tga
+
+newmtl Material__183
+	Ns 10.000000000000
+	Ni 1.500000000000
+	d 1.000000000000
+	Tr 0.000000000000
+	Tf 1.000000000000 1.000000000000 1.000000000000 
+	illum 2
+	Ka 0.587999999523 0.587999999523 0.587999999523
+	Kd 0.587999999523 0.587999999523 0.587999999523
+	Ks 0.449999988079 0.449999988079 0.449999988079
+	Ke 0.000000000000 0.000000000000 0.000000000000
+	map_Ka C:\Users\Dries\Documents\1_DAE\S3\Game Art Pipeline\06_Final\Final\GAP_Examen_DriesDeryckere\GAP_Examen_Gun_albedo_DriesDeryckere_2DAE-GG2.png
+	map_Kd C:\Users\Dries\Documents\1_DAE\S3\Game Art Pipeline\06_Final\Final\GAP_Examen_DriesDeryckere\GAP_Examen_Gun_albedo_DriesDeryckere_2DAE-GG2.png
+	map_bump Map__9_Normal_Bump.tga
+
+newmtl Material__184
+	Ns 10.000000000000
+	Ni 1.500000000000
+	d 1.000000000000
+	Tr 0.000000000000
+	Tf 1.000000000000 1.000000000000 1.000000000000 
+	illum 2
+	Ka 0.587999999523 0.587999999523 0.587999999523
+	Kd 0.587999999523 0.587999999523 0.587999999523
+	Ks 0.449999988079 0.449999988079 0.449999988079
+	Ke 0.000000000000 0.000000000000 0.000000000000
+	map_Ka C:\Users\Dries\Documents\1_DAE\S3\Game Art Pipeline\06_Final\Final\GAP_Examen_DriesDeryckere\GAP_Examen_Grip_albedo_DriesDeryckere_2DAE-GG2.png
+	map_Kd C:\Users\Dries\Documents\1_DAE\S3\Game Art Pipeline\06_Final\Final\GAP_Examen_DriesDeryckere\GAP_Examen_Grip_albedo_DriesDeryckere_2DAE-GG2.png
+	map_bump Map__10_Normal_Bump.tga

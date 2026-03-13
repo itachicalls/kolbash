@@ -1,0 +1,28 @@
+# Gun Material File - Fixed paths for web loading
+
+newmtl Material__180
+	Ns 10.0
+	d 1.0
+	illum 2
+	Ka 0.6 0.6 0.6
+	Kd 0.6 0.6 0.6
+	Ks 0.3 0.3 0.3
+	map_Kd Scope_Tex_A.tga.png
+
+newmtl Material__183
+	Ns 10.0
+	d 1.0
+	illum 2
+	Ka 0.6 0.6 0.6
+	Kd 0.6 0.6 0.6
+	Ks 0.45 0.45 0.45
+	map_Kd GAP_Examen_Gun_albedo_DriesDeryckere.tga.png
+
+newmtl Material__184
+	Ns 10.0
+	d 1.0
+	illum 2
+	Ka 0.6 0.6 0.6
+	Kd 0.6 0.6 0.6
+	Ks 0.45 0.45 0.45
+	map_Kd Grip_Tex_A.tga.png
