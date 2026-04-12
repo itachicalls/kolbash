@@ -86,8 +86,13 @@ export class Weapon {
       p.visible = false;
       p.userData.active = false;
       this.scene.remove(p);
-      if (p.isMesh) p.material?.dispose();
-      else p.traverse(c => { if (c.isMesh) c.material?.dispose(); });
+      p.traverse((obj) => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          mats.forEach((m) => m.dispose?.());
+        }
+      });
     }
     this.projectiles = [];
   }

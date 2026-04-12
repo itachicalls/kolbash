@@ -49,6 +49,7 @@ export class UIManager {
       loadingProgress: document.getElementById('loading-progress'),
       startScreen: document.getElementById('start-screen'),
       hud: document.getElementById('hud'),
+      hudTouchLayer: document.getElementById('hud-touch-layer'),
       gameOver: document.getElementById('game-over'),
       gameRetryBtn: document.getElementById('game-retry-btn'),
 
@@ -129,6 +130,7 @@ export class UIManager {
 
   showVictory(stats, onDone) {
     if (this.elements.victoryScreen) {
+      if (this.elements.hudTouchLayer) this.elements.hudTouchLayer.style.display = 'none';
       if (this.elements.hud) this.elements.hud.style.display = 'none';
       if (this.elements.dareScreen) this.elements.dareScreen.style.display = 'none';
       if (this.elements.storeScreen) this.elements.storeScreen.style.display = 'none';
@@ -197,6 +199,10 @@ export class UIManager {
     if (this.elements.dareScreen) this.elements.dareScreen.style.display = 'none';
     if (this.elements.storeScreen) this.elements.storeScreen.style.display = 'none';
     if (this.elements.victoryScreen) this.elements.victoryScreen.style.display = 'none';
+
+    if (this.elements.hudTouchLayer) {
+      this.elements.hudTouchLayer.style.display = screen === 'game' ? 'block' : 'none';
+    }
 
     if (screen !== 'game') {
       this.hideWaveCountdown();
@@ -486,6 +492,7 @@ export class UIManager {
     }
     if (this.elements.storeScreen) this.elements.storeScreen.style.display = 'none';
     if (this.elements.hud) this.elements.hud.style.display = 'block';
+    if (this.elements.hudTouchLayer) this.elements.hudTouchLayer.style.display = 'block';
   }
 
   init() {
@@ -506,12 +513,30 @@ export class UIManager {
     const orb = this.elements.specialVortexOrb;
     if (orb && !orb.dataset.bound) {
       orb.dataset.bound = '1';
+      let lastFireMs = 0;
       const fire = (e) => {
-        if (e.button > 0) return;
-        e.preventDefault();
+        if (e && e.button > 0) return;
+        if (e) {
+          try {
+            e.preventDefault();
+          } catch (err) {}
+        }
+        const t = performance.now();
+        if (t - lastFireMs < 380) return;
+        lastFireMs = t;
         this.onSpecialActivate?.();
       };
       orb.addEventListener('pointerup', fire, { passive: false });
+      orb.addEventListener(
+        'touchend',
+        (e) => {
+          try {
+            e.preventDefault();
+          } catch (err) {}
+          fire(e);
+        },
+        { passive: false }
+      );
     }
   }
 }

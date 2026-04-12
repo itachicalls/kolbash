@@ -160,7 +160,7 @@
     #weapon-name { color: #00ffff; }
 
     #special-charge-wrap {
-      position: absolute; top: 120px; right: 18px; width: 120px; z-index: 105;
+      position: fixed; top: 120px; right: 18px; width: 120px; z-index: 1;
       pointer-events: none;
     }
     #special-charge-wrap .special-label {
@@ -178,6 +178,7 @@
     }
 
     /* Disco Vortex: bottom-center circular tap target (out of the way of center aim) */
+    /* Sits in #hud-touch-layer (z 220) so #mobile-controls look pad (z 150) never steals taps */
     #special-vortex-orb {
       display: none;
       flex-direction: row;
@@ -185,7 +186,7 @@
       left: 50%;
       bottom: 72px;
       transform: translateX(-50%);
-      z-index: 165;
+      z-index: 2;
       width: 58px;
       height: 58px;
       border-radius: 50%;
@@ -242,7 +243,7 @@
       position: fixed;
       top: 50px;
       right: 12px;
-      z-index: 165;
+      z-index: 2;
       width: 42px;
       height: 42px;
       border-radius: 50%;
@@ -615,9 +616,18 @@
       pointer-events: none; z-index: 150; display: none;
     }
 
+    /* Leave bottom strip free for vortex orb + fire row (avoids accidental aim drags on UI taps) */
     #touch-look-area {
-      position: absolute; top: 0; right: 0; width: 55%; height: 100%;
+      position: absolute; top: 0; right: 0; width: 55%; height: calc(100% - 220px);
       pointer-events: auto;
+    }
+
+    /* Above #mobile-controls so music + vortex orb receive touches (not the right-hand look pad) */
+    #hud-touch-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 220;
     }
 
     #joystick-container {
@@ -773,6 +783,7 @@
       #fire-btn { width: 65px; height: 65px; }
       #mobile-buttons { bottom: 10px; right: 10px; gap: 8px; }
       #mobile-autofire-toggle { font-size: 0.45rem; padding: 0.3rem 0.55rem; min-height: 40px; }
+      #touch-look-area { height: calc(100% - 200px); }
 
       #wave-announcement h2 { font-size: 2rem; }
       #dare-screen .dare-title { font-size: 1.6rem; }
@@ -840,11 +851,6 @@
 
     <div id="weapon-hud"><span id="weapon-name">DISCO BLASTER</span></div>
 
-    <div id="special-charge-wrap">
-      <div class="special-label">DISCO VORTEX</div>
-      <div id="special-charge-bg"><div id="special-charge-fill"></div></div>
-    </div>
-
     <div id="health-container">
       <span id="health-label">HP</span>
       <div id="health-bar-bg"><div id="health-bar"></div></div>
@@ -858,12 +864,6 @@
       <div class="powerup-indicator" id="slow-motion-indicator"><div class="icon"></div><span class="name">SLOW MO</span><span class="timer">0.0s</span></div>
       <div class="powerup-indicator" id="alien-ship-indicator"><div class="icon"></div><span class="name">ALLY SHIP</span><span class="timer">0.0s</span></div>
     </div>
-
-    <button type="button" id="music-toggle-btn" aria-label="Toggle music" title="Music">🎵</button>
-    <button type="button" id="special-vortex-orb" aria-label="Disco Vortex" title="Disco Vortex (full charge)">
-      <span class="special-orb-glow" aria-hidden="true"></span>
-      <span class="special-orb-core" aria-hidden="true"></span>
-    </button>
 
     <div id="wave-announcement">
       <h2>WAVE <span id="announce-wave-num">1</span></h2>
@@ -914,6 +914,18 @@
         <div class="mobile-btn" id="fire-btn">FIRE</div>
       </div>
     </div>
+  </div>
+
+  <div id="hud-touch-layer">
+    <div id="special-charge-wrap">
+      <div class="special-label">DISCO VORTEX</div>
+      <div id="special-charge-bg"><div id="special-charge-fill"></div></div>
+    </div>
+    <button type="button" id="music-toggle-btn" aria-label="Toggle music" title="Music">🎵</button>
+    <button type="button" id="special-vortex-orb" aria-label="Disco Vortex" title="Disco Vortex (full charge)">
+      <span class="special-orb-glow" aria-hidden="true"></span>
+      <span class="special-orb-core" aria-hidden="true"></span>
+    </button>
   </div>
 
   <div id="game-over">

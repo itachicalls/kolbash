@@ -79,7 +79,11 @@ function pickClip(animations) {
 }
 
 export class SpecialAttackController {
-  constructor(scene) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {{ maxOrbs?: number }} [opts] Lower maxOrbs on mobile to reduce GPU/RAM spikes during vortex.
+   */
+  constructor(scene, opts = {}) {
     this.scene = scene;
     this.loader = new FBXLoader();
     this.cache = null;
@@ -101,7 +105,8 @@ export class SpecialAttackController {
 
     this.orbs = [];
     this.orbPool = [];
-    this.maxOrbs = 90;
+    const cap = opts.maxOrbs ?? 90;
+    this.maxOrbs = Math.max(16, Math.min(120, cap));
 
     this._forward = new THREE.Vector3();
     this._camPos = new THREE.Vector3();
@@ -340,6 +345,13 @@ export class SpecialAttackController {
 
     if (this.heroModel) {
       this.heroGroup.remove(this.heroModel);
+      this.heroModel.traverse((obj) => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          mats.forEach((m) => m.dispose?.());
+        }
+      });
       this.heroModel = null;
     }
     if (this.heroGroup.parent) this.scene.remove(this.heroGroup);

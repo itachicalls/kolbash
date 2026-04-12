@@ -83,6 +83,8 @@ class Game {
     } catch (e) {}
 
     this._glContextLost = false;
+    /** Throttles rapid special taps while not charged (avoids iOS jank / audio spikes). */
+    this._lastSpecialRejectMs = 0;
   }
 
   _buildPerfProfile() {
@@ -254,7 +256,9 @@ class Game {
 
     this.deathScene = new DeathScene();
     this.dareDancers = new DareBackupDancers({ useWebGlRenderer: !this.isMobile });
-    this.specialAttack = new SpecialAttackController(this.scene);
+    this.specialAttack = new SpecialAttackController(this.scene, {
+      maxOrbs: this.isMobile ? 40 : 90
+    });
     this.gameMusic = new GameMusic();
     this.waveClear = new WaveClearCinematic(this.scene, this.camera);
   }
@@ -1270,8 +1274,14 @@ class Game {
   }
 
   trySpecialAttack() {
+    const now = performance.now();
     if (!this.isRunning || this.player.isDead || this.specialAttackActive) return;
-    if (!this.specialReady || !this.specialAttack?.canStart()) return;
+    if (!this.specialReady || !this.specialAttack?.canStart()) {
+      if (now - this._lastSpecialRejectMs < 320) return;
+      this._lastSpecialRejectMs = now;
+      return;
+    }
+    this._lastSpecialRejectMs = 0;
 
     this.specialReady = false;
     this.specialCharge = 0;
@@ -1322,6 +1332,7 @@ class Game {
     if (this.isMobile) {
       document.getElementById('mobile-controls')?.style.setProperty('display', 'none');
     }
+    document.getElementById('hud-touch-layer')?.style.setProperty('display', 'none');
     document.getElementById('hud')?.style.setProperty('display', 'none');
 
     const yaw = this.getPlayerYaw();
