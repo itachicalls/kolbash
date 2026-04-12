@@ -1,6 +1,8 @@
 /**
  * Mobile / Chrome crash diagnostics: on-screen ring buffer + global hooks.
  * Enable: add ?debug=1 or ?kolbashDebug=1 to URL, or localStorage.setItem('kolbash_debug_mobile','1') then reload.
+ * Last ~60 log lines are mirrored to sessionStorage (kolbash_debug_crash_tail) on heartbeat, hide, unload —
+ * shown as PREV_LOG_TAIL after a reload so sudden kills still leave a breadcrumb trail.
  */
 
 const LS_KEY = 'kolbash_debug_mobile';
