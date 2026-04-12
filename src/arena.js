@@ -138,13 +138,18 @@ export class Arena {
   }
 
   clearHazards() {
-    this.hazardGroup.traverse(child => {
-      if (child.isMesh) {
-        child.geometry?.dispose();
-        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-        else child.material?.dispose();
+    const materials = new Set();
+    this.hazardGroup.traverse((child) => {
+      if (!child.isMesh) return;
+      child.geometry?.dispose();
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      for (const m of mats) {
+        if (m) materials.add(m);
       }
     });
+    for (const m of materials) {
+      m.dispose?.();
+    }
     while (this.hazardGroup.children.length) {
       this.hazardGroup.remove(this.hazardGroup.children[0]);
     }

@@ -226,13 +226,6 @@ export class ItemManager {
     const idx = this.powerups.indexOf(powerup);
     if (idx !== -1) {
       this.powerups.splice(idx, 1);
-      powerup.traverse((child) => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) {
-          if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
-          else child.material.dispose();
-        }
-      });
       this.scene.remove(powerup);
     }
   }

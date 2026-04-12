@@ -37,6 +37,9 @@ export class Weapon {
   constructor(camera, scene, opts = {}) {
     this.camera = camera;
     this.scene = scene;
+    /** Mobile: one shared mesh + shared geos/mats per color — avoids multi-mesh groups + dispose churn. */
+    this._mobileSimplify = opts.mobileSimplifyProjectiles === true;
+    this._mobMats = new Map();
 
     this.currentType = 'disco';
     this.isHolding = false;
@@ -86,13 +89,15 @@ export class Weapon {
       p.visible = false;
       p.userData.active = false;
       this.scene.remove(p);
-      p.traverse((obj) => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-          mats.forEach((m) => m.dispose?.());
-        }
-      });
+      if (!this._mobileSimplify) {
+        p.traverse((obj) => {
+          if (obj.geometry) obj.geometry.dispose();
+          if (obj.material) {
+            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+            mats.forEach((m) => m.dispose?.());
+          }
+        });
+      }
     }
     this.projectiles = [];
   }
@@ -202,6 +207,25 @@ export class Weapon {
   createProjectile() {
     const colors = this.projColors;
     const color = colors[Math.floor(Math.random() * colors.length)];
+
+    if (this._mobileSimplify) {
+      let mat = this._mobMats.get(color);
+      if (!mat) {
+        mat = new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.96,
+          depthWrite: true
+        });
+        this._mobMats.set(color, mat);
+      }
+      const geo = this.geos[this.currentType];
+      const proj = new THREE.Mesh(geo, mat);
+      proj.visible = false;
+      proj.userData = { active: false, isGroup: false };
+      this.scene.add(proj);
+      return proj;
+    }
 
     if (this.currentType === 'rocket') {
       const group = new THREE.Group();
@@ -396,8 +420,9 @@ export class Weapon {
             tr[1].scale.setScalar(0.75 + Math.cos(now * 0.06) * 0.15);
           }
         }
-      } else if (wt === 'gatling') {
-        p.rotation.z += deltaTime * 20;
+      } else {
+        if (wt === 'gatling') p.rotation.z += deltaTime * 20;
+        else p.rotation.y += deltaTime * 12;
       }
 
       if (t >= 1) {

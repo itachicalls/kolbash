@@ -410,7 +410,10 @@ class Game {
   }
 
   createWeapon() {
-    this.weapon = new Weapon(this.camera, this.scene, { maxProjectiles: this.perf.maxPlayerProjectiles });
+    this.weapon = new Weapon(this.camera, this.scene, {
+      maxProjectiles: this.perf.maxPlayerProjectiles,
+      mobileSimplifyProjectiles: this.isMobile
+    });
   }
 
   createArena() {
