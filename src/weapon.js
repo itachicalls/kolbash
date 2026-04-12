@@ -39,6 +39,8 @@ export class Weapon {
 
     this.currentType = 'disco';
     this.isHolding = false;
+    /** Set each frame by Game on mobile when auto-fire is enabled. */
+    this.mobileAutoFireActive = false;
     this.lastFireTime = 0;
     this.recoil = 0;
     this.fireFlashUntil = 0;
@@ -162,7 +164,7 @@ export class Weapon {
   }
 
   tryFire(rapidFire = false) {
-    if (!this.isHolding) return null;
+    if (!this.isHolding && !this.mobileAutoFireActive) return null;
     const now = performance.now();
     const rate = rapidFire ? this.rapidFireRate : this.normalFireRate;
     if (now - this.lastFireTime < rate) return null;

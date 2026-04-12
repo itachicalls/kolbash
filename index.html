@@ -641,7 +641,25 @@
 
     #mobile-buttons {
       position: absolute; bottom: 20px; right: 20px;
-      display: flex; gap: 12px; pointer-events: auto;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+      pointer-events: auto;
+    }
+
+    .mobile-buttons-row {
+      display: flex; flex-direction: row; gap: 12px; align-items: center;
+    }
+
+    #mobile-autofire-toggle {
+      font-family: 'Orbitron', monospace; font-size: 0.52rem; font-weight: 700;
+      letter-spacing: 0.06em; padding: 0.4rem 0.75rem; border-radius: 999px;
+      border: 1px solid rgba(255, 0, 200, 0.45); background: rgba(8, 4, 16, 0.72);
+      color: rgba(255, 255, 255, 0.65); cursor: pointer; pointer-events: auto;
+      -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+      min-height: 44px;
+    }
+    #mobile-autofire-toggle.on {
+      border-color: rgba(0, 255, 170, 0.75); color: #00ffaa;
+      box-shadow: 0 0 14px rgba(0, 255, 170, 0.28);
     }
 
     .mobile-btn {
@@ -754,6 +772,7 @@
       .mobile-btn { width: 55px; height: 55px; font-size: 0.45rem; }
       #fire-btn { width: 65px; height: 65px; }
       #mobile-buttons { bottom: 10px; right: 10px; gap: 8px; }
+      #mobile-autofire-toggle { font-size: 0.45rem; padding: 0.3rem 0.55rem; min-height: 40px; }
 
       #wave-announcement h2 { font-size: 2rem; }
       #dare-screen .dare-title { font-size: 1.6rem; }
@@ -889,8 +908,11 @@
       </div>
     </div>
     <div id="mobile-buttons">
-      <div class="mobile-btn" id="jump-btn">JUMP</div>
-      <div class="mobile-btn" id="fire-btn">FIRE</div>
+      <button type="button" id="mobile-autofire-toggle" aria-pressed="false" aria-label="Toggle auto fire">AUTO: OFF</button>
+      <div class="mobile-buttons-row">
+        <div class="mobile-btn" id="jump-btn">JUMP</div>
+        <div class="mobile-btn" id="fire-btn">FIRE</div>
+      </div>
     </div>
   </div>
 

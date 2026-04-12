@@ -67,6 +67,14 @@ class Game {
     this.specialReady = false;
 
     this._waveCountdownRunning = false;
+
+    /** Mobile-only: continuous fire without holding FIRE (persisted). */
+    this.mobileAutoFire = false;
+    try {
+      if (this.isMobile) this.mobileAutoFire = localStorage.getItem('kolbash_mobile_autofire') === '1';
+    } catch (e) {}
+
+    this._glContextLost = false;
   }
 
   _buildPerfProfile() {
@@ -195,8 +203,13 @@ class Game {
       'webglcontextlost',
       (e) => {
         e.preventDefault();
+        this._glContextLost = true;
         this.isRunning = false;
         this.clock.stop();
+        if (this.weapon) {
+          this.weapon.isHolding = false;
+          this.weapon.mobileAutoFireActive = false;
+        }
       },
       false
     );
@@ -388,10 +401,21 @@ class Game {
   }
 
   setupEventListeners() {
+    window.addEventListener('error', (ev) => {
+      console.warn('[KOL BASH]', ev.error || ev.message);
+    });
+    window.addEventListener('unhandledrejection', (ev) => {
+      console.warn('[KOL BASH] unhandled', ev.reason);
+    });
+
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         this.clock.stop();
         this.gameMusic?.suspendForBackground();
+        if (this.weapon) {
+          this.weapon.isHolding = false;
+          this.weapon.mobileAutoFireActive = false;
+        }
       } else if (this.isRunning) {
         this.clock.start();
         this.gameMusic?.resumeIfRunning();
@@ -416,6 +440,8 @@ class Game {
       }, { passive: false });
     }
 
+    this._setupMobileAutofireToggle();
+
     document.addEventListener('keydown', (e) => {
       if (e.code === 'KeyE' && this.isRunning) {
         this.trySpecialAttack();
@@ -432,14 +458,53 @@ class Game {
   }
 
   onWindowResize() {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const w = Math.max(1, window.innerWidth || 1);
+    const h = Math.max(1, window.innerHeight || 1);
+    this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.perf.maxPixelRatio));
     if (this.deathSequenceActive && this.deathScene) {
       this.deathScene.camera.aspect = this.camera.aspect;
       this.deathScene.camera.updateProjectionMatrix();
     }
+  }
+
+  _syncMobileAutofireFlag() {
+    if (!this.weapon) return;
+    const block =
+      !this.isMobile ||
+      !this.mobileAutoFire ||
+      !this.isRunning ||
+      this.player.inputFrozen ||
+      this.player.isDead ||
+      this.specialAttackActive ||
+      this.waveManager?.combatHoldActive ||
+      this.waveClear?.active;
+    this.weapon.mobileAutoFireActive = !block;
+  }
+
+  _setupMobileAutofireToggle() {
+    const btn = document.getElementById('mobile-autofire-toggle');
+    if (!btn) return;
+    const sync = () => {
+      const on = !!this.mobileAutoFire;
+      btn.textContent = on ? 'AUTO: ON' : 'AUTO: OFF';
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    };
+    sync();
+    const onToggle = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.mobileAutoFire = !this.mobileAutoFire;
+      try {
+        localStorage.setItem('kolbash_mobile_autofire', this.mobileAutoFire ? '1' : '0');
+      } catch (err) {}
+      sync();
+    };
+    btn.addEventListener('pointerup', onToggle);
+    this._syncMobileAutofireBtn = sync;
   }
 
   switchWeapon(type) {
@@ -532,6 +597,7 @@ class Game {
     this.ui.init();
     this.ui.showGame();
     this.ui.updateWeaponName('DISCO BLASTER');
+    this._syncMobileAutofireBtn?.();
 
     if (this.isMobile) {
       this.player.controls.lock();
@@ -1248,15 +1314,22 @@ class Game {
   }
 
   animate() {
+    if (this._glContextLost) return;
+
     if (this.isRunning && this.waveClear?.active) {
       requestAnimationFrame(() => this.animate());
-      const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
-      const playerPos = this.player.getPosition();
-      this.physicsWorld.update(delta);
-      this.player.update(delta);
-      this.updateAllyShips(delta, playerPos);
-      this.waveClear.update(delta);
-      this.renderer.render(this.scene, this.camera);
+      try {
+        this._syncMobileAutofireFlag();
+        const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
+        const playerPos = this.player.getPosition();
+        this.physicsWorld.update(delta);
+        this.player.update(delta);
+        this.updateAllyShips(delta, playerPos);
+        this.waveClear.update(delta);
+        this.renderer.render(this.scene, this.camera);
+      } catch (err) {
+        console.warn('[KOL BASH] frame (wave clear)', err);
+      }
       return;
     }
 
@@ -1264,63 +1337,68 @@ class Game {
 
     requestAnimationFrame(() => this.animate());
 
-    const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
-    const playerPos = this.player.getPosition();
+    try {
+      this._syncMobileAutofireFlag();
+      const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
+      const playerPos = this.player.getPosition();
 
-    this.physicsWorld.update(delta);
-    this.player.update(delta);
+      this.physicsWorld.update(delta);
+      this.player.update(delta);
 
-    if (this.specialAttackActive) {
-      this.specialAttack.update(delta, this.player, this.camera);
+      if (this.specialAttackActive) {
+        this.specialAttack.update(delta, this.player, this.camera);
+        this.weapon.update(delta);
+        if (this.arena) this.arena.update(delta);
+        this.enemyManager.update(delta, playerPos);
+        this.itemManager.update(delta, playerPos);
+        this.handleItemPickups(playerPos);
+        this.waveManager.update(delta, playerPos);
+        this.updateAllyShips(delta, playerPos);
+        this.updateLevelEffects(delta, playerPos);
+
+        if (this._uiTick === undefined) this._uiTick = 0;
+        this._uiTick++;
+        if (this._uiTick % 3 === 0) {
+          this.updatePowerupUI();
+          this.ui.updateStats(this.kills, this.damageDealt);
+        }
+
+        this.renderer.render(this.scene, this.camera);
+        return;
+      }
+
       this.weapon.update(delta);
       if (this.arena) this.arena.update(delta);
+      this.handleShooting(playerPos);
       this.enemyManager.update(delta, playerPos);
+      this.handleEnemyDamage(playerPos);
+      this.handleArenaTraps(playerPos);
       this.itemManager.update(delta, playerPos);
       this.handleItemPickups(playerPos);
       this.waveManager.update(delta, playerPos);
       this.updateAllyShips(delta, playerPos);
       this.updateLevelEffects(delta, playerPos);
 
+      if (this.screenShake > 0.01) {
+        this.camera.position.x += (Math.random() - 0.5) * this.screenShake * 0.15;
+        this.camera.position.y += (Math.random() - 0.5) * this.screenShake * 0.08;
+        this.screenShake *= 0.82;
+      } else {
+        this.screenShake = 0;
+      }
+
       if (this._uiTick === undefined) this._uiTick = 0;
       this._uiTick++;
       if (this._uiTick % 3 === 0) {
         this.updatePowerupUI();
+        this.ui.updateCrosshair(this.weapon);
         this.ui.updateStats(this.kills, this.damageDealt);
       }
 
       this.renderer.render(this.scene, this.camera);
-      return;
+    } catch (err) {
+      console.warn('[KOL BASH] frame', err);
     }
-
-    this.weapon.update(delta);
-    if (this.arena) this.arena.update(delta);
-    this.handleShooting(playerPos);
-    this.enemyManager.update(delta, playerPos);
-    this.handleEnemyDamage(playerPos);
-    this.handleArenaTraps(playerPos);
-    this.itemManager.update(delta, playerPos);
-    this.handleItemPickups(playerPos);
-    this.waveManager.update(delta, playerPos);
-    this.updateAllyShips(delta, playerPos);
-    this.updateLevelEffects(delta, playerPos);
-
-    if (this.screenShake > 0.01) {
-      this.camera.position.x += (Math.random() - 0.5) * this.screenShake * 0.15;
-      this.camera.position.y += (Math.random() - 0.5) * this.screenShake * 0.08;
-      this.screenShake *= 0.82;
-    } else {
-      this.screenShake = 0;
-    }
-
-    if (this._uiTick === undefined) this._uiTick = 0;
-    this._uiTick++;
-    if (this._uiTick % 3 === 0) {
-      this.updatePowerupUI();
-      this.ui.updateCrosshair(this.weapon);
-      this.ui.updateStats(this.kills, this.damageDealt);
-    }
-
-    this.renderer.render(this.scene, this.camera);
   }
 }
 
