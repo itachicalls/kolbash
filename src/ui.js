@@ -2,6 +2,9 @@
  * UI System - HUD, wave announcements, level effects, store, dare screen
  */
 
+import { TOTAL_WAVES } from './waves.js';
+import { SPECIAL_CHARGE_KILLS } from './special-attack.js';
+
 export const STORE_ITEMS = [
   { id: 'gatling', name: 'GATLING GUN', cost: 200, type: 'weapon', desc: 'Rapid bullet storm' },
   { id: 'laser', name: 'LASER CANNON', cost: 300, type: 'weapon', desc: 'High-damage beam' },
@@ -71,8 +74,22 @@ export class UIManager {
       storeGrid: document.getElementById('store-grid'),
       storeClose: document.getElementById('store-close'),
 
-      weaponName: document.getElementById('weapon-name')
+      weaponName: document.getElementById('weapon-name'),
+
+      victoryScreen: document.getElementById('victory-screen'),
+      vicScore: document.getElementById('vic-score'),
+      vicKills: document.getElementById('vic-kills'),
+      vicDamage: document.getElementById('vic-damage'),
+      vicCoins: document.getElementById('vic-coins'),
+      victoryDone: document.getElementById('victory-done'),
+
+      specialChargeFill: document.getElementById('special-charge-fill'),
+      specialVortexOrb: document.getElementById('special-vortex-orb'),
+      musicToggleBtn: document.getElementById('music-toggle-btn')
     };
+
+    this.onSpecialActivate = null;
+    this._gameMusic = null;
 
     this.waveAnnouncementTimeout = null;
     this.levelEffectTimeout = null;
@@ -89,7 +106,37 @@ export class UIManager {
     }
   }
 
-  showLoading() { this.setVisibility('loading'); }
+  showLoading() {
+    this.setVisibility('loading');
+  }
+
+  showVictory(stats, onDone) {
+    if (this.elements.victoryScreen) {
+      if (this.elements.hud) this.elements.hud.style.display = 'none';
+      if (this.elements.dareScreen) this.elements.dareScreen.style.display = 'none';
+      if (this.elements.storeScreen) this.elements.storeScreen.style.display = 'none';
+      if (this.elements.gameOver) this.elements.gameOver.style.display = 'none';
+      if (this.elements.startScreen) this.elements.startScreen.style.display = 'none';
+      if (this.elements.loadingScreen) this.elements.loadingScreen.style.display = 'none';
+
+      if (this.elements.vicScore) this.elements.vicScore.textContent = (stats.score ?? 0).toLocaleString();
+      if (this.elements.vicKills) this.elements.vicKills.textContent = (stats.kills ?? 0).toLocaleString();
+      if (this.elements.vicDamage) this.elements.vicDamage.textContent = (stats.damageDealt ?? 0).toLocaleString();
+      if (this.elements.vicCoins) this.elements.vicCoins.textContent = (stats.coins ?? 0).toLocaleString();
+
+      this.elements.victoryScreen.style.display = 'flex';
+
+      const btn = this.elements.victoryDone;
+      if (btn) {
+        const clone = btn.cloneNode(true);
+        btn.replaceWith(clone);
+        this.elements.victoryDone = document.getElementById('victory-done');
+        const done = () => onDone?.();
+        this.elements.victoryDone.addEventListener('click', done, { once: true });
+        this.elements.victoryDone.addEventListener('touchend', (e) => { e.preventDefault(); done(); }, { once: true });
+      }
+    }
+  }
 
   updateLoadingProgress(message) {
     if (this.elements.loadingProgress) this.elements.loadingProgress.textContent = message;
@@ -126,6 +173,17 @@ export class UIManager {
     });
     if (this.elements.dareScreen) this.elements.dareScreen.style.display = 'none';
     if (this.elements.storeScreen) this.elements.storeScreen.style.display = 'none';
+    if (this.elements.victoryScreen) this.elements.victoryScreen.style.display = 'none';
+
+    if (screen !== 'game') {
+      if (this.elements.specialVortexOrb) {
+        this.elements.specialVortexOrb.style.display = 'none';
+        this.elements.specialVortexOrb.classList.remove('special-vortex-ready');
+      }
+      if (this.elements.musicToggleBtn) this.elements.musicToggleBtn.style.display = 'none';
+    } else if (this.elements.musicToggleBtn) {
+      this.elements.musicToggleBtn.style.display = 'flex';
+    }
   }
 
   updateHealth(current, max) {
@@ -158,7 +216,9 @@ export class UIManager {
   }
 
   updateWave(wave) {
-    if (this.elements.waveNumber) this.elements.waveNumber.textContent = wave;
+    if (this.elements.waveNumber) {
+      this.elements.waveNumber.textContent = `${wave} / ${TOTAL_WAVES}`;
+    }
   }
 
   updateLevelName(name) {
@@ -214,6 +274,48 @@ export class UIManager {
     if (this.elements.weaponName) this.elements.weaponName.textContent = name;
   }
 
+  updateSpecialCharge(current, max) {
+    const pct = Math.max(0, Math.min(100, (current / max) * 100));
+    if (this.elements.specialChargeFill) {
+      this.elements.specialChargeFill.style.width = `${pct}%`;
+    }
+  }
+
+  setSpecialReady(ready) {
+    const orb = this.elements.specialVortexOrb;
+    if (orb) {
+      orb.classList.toggle('special-vortex-ready', !!ready);
+      orb.style.display = ready ? 'flex' : 'none';
+      orb.setAttribute('aria-pressed', ready ? 'true' : 'false');
+    }
+  }
+
+  bindMusic(gameMusic) {
+    this._gameMusic = gameMusic;
+    const b = this.elements.musicToggleBtn;
+    if (!b || b.dataset.bound) return;
+    b.dataset.bound = '1';
+    const onTap = (e) => {
+      e.preventDefault();
+      this._gameMusic?.toggle();
+      this.syncMusicButton();
+    };
+    b.addEventListener('click', onTap);
+    b.addEventListener('touchend', onTap, { passive: false });
+    this.syncMusicButton();
+  }
+
+  syncMusicButton() {
+    const b = this.elements.musicToggleBtn;
+    if (!b || !this._gameMusic) return;
+    const playing = this._gameMusic.isAudiblyPlaying();
+    b.classList.toggle('music-off', !playing);
+    b.setAttribute('aria-pressed', playing ? 'true' : 'false');
+    b.title = playing ? 'Pause music' : 'Play music';
+    b.textContent = playing ? '🎵' : '⏸';
+    b.setAttribute('aria-label', playing ? 'Pause music' : 'Play music');
+  }
+
   showDareScreen(wave, onContinue, onStore) {
     if (!this.elements.dareScreen) return;
     const msg = DARE_MESSAGES[Math.floor(Math.random() * DARE_MESSAGES.length)];
@@ -221,7 +323,15 @@ export class UIManager {
     if (this.elements.dareText) this.elements.dareText.textContent = msg;
 
     this.elements.hud.style.display = 'none';
-    this.elements.dareScreen.style.display = 'flex';
+    const dare = this.elements.dareScreen;
+    dare.style.display = 'flex';
+    dare.style.opacity = '0';
+    dare.style.transition = 'opacity 0.55s ease';
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        dare.style.opacity = '1';
+      });
+    });
 
     const contBtn = this.elements.dareContinue;
     const storeBtn = this.elements.dareStore;
@@ -233,10 +343,15 @@ export class UIManager {
       this.elements.dareStore = document.getElementById('dare-store');
     };
 
-    contBtn.addEventListener('click', () => { cleanup(); this.elements.dareScreen.style.display = 'none'; onContinue(); }, { once: true });
-    contBtn.addEventListener('touchend', (e) => { e.preventDefault(); cleanup(); this.elements.dareScreen.style.display = 'none'; onContinue(); }, { once: true });
-    storeBtn.addEventListener('click', () => { cleanup(); this.elements.dareScreen.style.display = 'none'; onStore(); }, { once: true });
-    storeBtn.addEventListener('touchend', (e) => { e.preventDefault(); cleanup(); this.elements.dareScreen.style.display = 'none'; onStore(); }, { once: true });
+    const hideDare = () => {
+      this.elements.dareScreen.style.display = 'none';
+      this.elements.dareScreen.style.opacity = '';
+      this.elements.dareScreen.style.transition = '';
+    };
+    contBtn.addEventListener('click', () => { cleanup(); hideDare(); onContinue(); }, { once: true });
+    contBtn.addEventListener('touchend', (e) => { e.preventDefault(); cleanup(); hideDare(); onContinue(); }, { once: true });
+    storeBtn.addEventListener('click', () => { cleanup(); hideDare(); onStore(); }, { once: true });
+    storeBtn.addEventListener('touchend', (e) => { e.preventDefault(); cleanup(); hideDare(); onStore(); }, { once: true });
   }
 
   showStore(coins, unlockedWeapons, currentWeapon, callbacks) {
@@ -303,7 +418,11 @@ export class UIManager {
   }
 
   hideAllOverlays() {
-    if (this.elements.dareScreen) this.elements.dareScreen.style.display = 'none';
+    if (this.elements.dareScreen) {
+      this.elements.dareScreen.style.display = 'none';
+      this.elements.dareScreen.style.opacity = '';
+      this.elements.dareScreen.style.transition = '';
+    }
     if (this.elements.storeScreen) this.elements.storeScreen.style.display = 'none';
     if (this.elements.hud) this.elements.hud.style.display = 'block';
   }
@@ -319,5 +438,18 @@ export class UIManager {
     this.updatePowerup('slowMotion', 0);
     this.updatePowerup('alienShip', 0);
     this.updateWeaponName('DISCO BLASTER');
+    this.updateSpecialCharge(0, SPECIAL_CHARGE_KILLS);
+    this.setSpecialReady(false);
+
+    const orb = this.elements.specialVortexOrb;
+    if (orb && !orb.dataset.bound) {
+      orb.dataset.bound = '1';
+      const fire = (e) => {
+        e.preventDefault();
+        this.onSpecialActivate?.();
+      };
+      orb.addEventListener('click', fire);
+      orb.addEventListener('touchend', fire, { passive: false });
+    }
   }
 }

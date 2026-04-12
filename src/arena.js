@@ -1,49 +1,9 @@
 /**
  * Arena - Level-based themed environments
- * ZERO per-frame canvas work. Textures drawn once per level change.
- * Mantras redrawn only on text rotation (every 3s).
+ * ZERO per-frame canvas work on walls. Wall decals redraw only on level change.
  */
 
 import * as THREE from 'three';
-
-const MOCKERY_MANTRAS = [
-  'DANCE INTO OBLIVION',
-  'YOUR SCORE MEANS NOTHING',
-  'WEAK. PREDICTABLE. DEAD.',
-  'DID YOU REALLY THINK YOU\'D WIN?',
-  'YOUR REFLEXES ARE A JOKE',
-  'THE DISCO DEMANDS SACRIFICE',
-  'GIT GUD OR GET DUSTED',
-  'WAVE 1? MORE LIKE WAVE GOODBYE',
-  'EVEN THE BOSS PITIES YOU',
-  'SKILL ISSUE DETECTED',
-  'RAGE QUIT IN 3... 2...',
-  'PATHETIC ATTEMPT',
-  'L + RATIO + DISCO\'D',
-  'CRY HARDER',
-  'UNINSTALL RECOMMENDED',
-  'THE DANCERS LAUGH AT YOU',
-  'PRESS F TO PAY RESPECTS',
-  'BETTER LUCK NEXT LIFE',
-  'YOU DIED. AGAIN.',
-  'SIT DOWN. YOU\'RE DONE.',
-  'NICE TRY, LOSER',
-  'THIS IS EMBARRASSING',
-  'THE DISCO REJECTS YOU',
-  'GOOD GAME. BAD PLAYER.',
-  'TOUCH GRASS. THEN COME BACK.',
-  'THE BOSS LAUGHED',
-  '0 SKILL. 100% SALT.',
-  'YOU GOT DISCO\'D',
-  'NOT EVEN CLOSE',
-  'YOUR AIM: TRASH',
-  'DELETED.',
-  'RIP BOZO',
-  'COPE. SEETHE. MALD.',
-  'GG EZ',
-  'TAKE THE L',
-  'BOT DIFFICULTY: YOU'
-];
 
 export const LEVELS = [
   {
@@ -113,14 +73,16 @@ export class Arena {
     this.scene = scene;
     this.physicsWorld = physicsWorld;
     this.currentLevel = 0;
-    this.wallMantras = [];
+    this.wallDecals = [];
     this.wallMeshes = [];
     this.neonTrimMeshes = [];
     this.planets = [];
 
-    this.mantraRotateTime = 0;
-    this.mantraRotateInterval = 3000;
-    this.mantraDirty = true;
+    this.hazardGroup = new THREE.Group();
+    this.scene.add(this.hazardGroup);
+    this.spikeZones = [];
+    this.asteroids = [];
+    this.hazardCooldownUntil = 0;
 
     this.createFloor();
     this.createSpaceSky();
@@ -129,49 +91,213 @@ export class Arena {
   }
 
   createFloor() {
+    const W = 1024;
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = W;
+    canvas.height = W;
     this.floorCanvas = canvas;
     this.floorCtx = canvas.getContext('2d');
 
     this.floorTexture = new THREE.CanvasTexture(canvas);
     this.floorTexture.wrapS = THREE.RepeatWrapping;
     this.floorTexture.wrapT = THREE.RepeatWrapping;
-    this.floorTexture.repeat.set(4, 4);
+    this.floorTexture.repeat.set(2.5, 2.5);
+    this.floorTexture.anisotropy = 12;
 
     const floorGeo = new THREE.PlaneGeometry(50, 50);
-    const floorMat = new THREE.MeshBasicMaterial({ map: this.floorTexture });
-    this.floorMesh = new THREE.Mesh(floorGeo, floorMat);
+    this.floorMat = new THREE.MeshStandardMaterial({
+      map: this.floorTexture,
+      roughness: 0.42,
+      metalness: 0.38,
+      envMapIntensity: 0
+    });
+    this.floorMesh = new THREE.Mesh(floorGeo, this.floorMat);
     this.floorMesh.rotation.x = -Math.PI / 2;
     this.floorMesh.position.y = 0.01;
     this.scene.add(this.floorMesh);
 
-    const baseMat = new THREE.MeshBasicMaterial({ color: 0x0d0a18 });
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x0a0814, roughness: 0.95, metalness: 0.1 });
     this.baseMesh = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), baseMat);
     this.baseMesh.rotation.x = -Math.PI / 2;
+    this.baseMesh.position.y = -0.02;
     this.scene.add(this.baseMesh);
+  }
+
+  clearHazards() {
+    this.hazardGroup.traverse(child => {
+      if (child.isMesh) {
+        child.geometry?.dispose();
+        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+        else child.material?.dispose();
+      }
+    });
+    while (this.hazardGroup.children.length) {
+      this.hazardGroup.remove(this.hazardGroup.children[0]);
+    }
+    this.spikeZones = [];
+    this.asteroids = [];
+  }
+
+  buildHazards(levelIndex) {
+    this.clearHazards();
+    if (levelIndex < 2) return;
+
+    const level = LEVELS[levelIndex];
+    const spikeNeon = new THREE.Color(level.neon);
+    const spikeMat = new THREE.MeshStandardMaterial({
+      color: spikeNeon.clone().multiplyScalar(0.22),
+      emissive: spikeNeon,
+      emissiveIntensity: 0.22,
+      metalness: 0.65,
+      roughness: 0.32
+    });
+
+    const spots = [
+      { x: 11, z: -9, r: 2.25 },
+      { x: -12, z: 10, r: 2.05 },
+      { x: -9, z: -12, r: 2.15 },
+      { x: 13, z: 11, r: 1.95 }
+    ];
+    const patchCount = levelIndex >= 4 ? 4 : 3;
+
+    for (let s = 0; s < patchCount; s++) {
+      const spot = spots[s];
+      const n = 7 + Math.floor(Math.random() * 4);
+      for (let i = 0; i < n; i++) {
+        const ang = (i / n) * Math.PI * 2 + Math.random() * 0.45;
+        const rad = spot.r * (0.32 + Math.random() * 0.58);
+        const sx = spot.x + Math.cos(ang) * rad;
+        const sz = spot.z + Math.sin(ang) * rad;
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.52 + Math.random() * 0.12, 5), spikeMat);
+        spike.position.set(sx, 0.26 + Math.random() * 0.04, sz);
+        const lean = 0.06 + Math.random() * 0.1;
+        spike.rotation.x = (Math.random() - 0.5) * lean;
+        spike.rotation.z = (Math.random() - 0.5) * lean;
+        spike.rotation.y = Math.random() * Math.PI * 2;
+        this.hazardGroup.add(spike);
+      }
+      this.spikeZones.push({ x: spot.x, z: spot.z, r: spot.r + 0.45, dmg: 12 });
+    }
+
+    if (levelIndex >= 4) {
+      const rockMat = new THREE.MeshStandardMaterial({
+        color: 0x4a4a55,
+        metalness: 0.5,
+        roughness: 0.48,
+        emissive: 0x120810,
+        emissiveIntensity: 0.12
+      });
+      for (let i = 0; i < 5; i++) {
+        const mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.38 + Math.random() * 0.42, 1), rockMat);
+        const orbitR = 6.5 + Math.random() * 13;
+        const speed = 0.2 + Math.random() * 0.38;
+        const height = 1.35 + Math.random() * 2.35;
+        this.hazardGroup.add(mesh);
+        this.asteroids.push({
+          mesh,
+          angle: Math.random() * Math.PI * 2,
+          orbitR,
+          speed,
+          height,
+          wobble: Math.random() * Math.PI * 2,
+          hitR: 1.08,
+          dmg: 19
+        });
+      }
+    }
+  }
+
+  updateHazards(deltaTime) {
+    const t = performance.now() * 0.001;
+    for (const a of this.asteroids) {
+      a.angle += deltaTime * a.speed;
+      const wx = Math.sin(t * 0.72 + a.wobble) * 0.85;
+      const wz = Math.cos(t * 0.58 + a.wobble * 1.2) * 0.65;
+      a.mesh.position.set(
+        Math.cos(a.angle) * a.orbitR + wx,
+        a.height + Math.sin(t * 1.05 + a.wobble) * 0.28,
+        Math.sin(a.angle) * a.orbitR + wz
+      );
+      a.mesh.rotation.x += deltaTime * 1.15;
+      a.mesh.rotation.y += deltaTime * 1.75;
+    }
+  }
+
+  pollTrapDamage(px, pz, py, nowMs) {
+    if (nowMs < this.hazardCooldownUntil) return 0;
+    let dmg = 0;
+    for (const z of this.spikeZones) {
+      const dx = px - z.x;
+      const dz = pz - z.z;
+      if (dx * dx + dz * dz <= z.r * z.r) dmg = Math.max(dmg, z.dmg);
+    }
+    for (const a of this.asteroids) {
+      const m = a.mesh.position;
+      const dx = px - m.x;
+      const dy = (py - 0.9) - m.y;
+      const dz = pz - m.z;
+      if (dx * dx + dy * dy + dz * dz <= a.hitR * a.hitR) dmg = Math.max(dmg, a.dmg);
+    }
+    if (dmg > 0) {
+      this.hazardCooldownUntil = nowMs + 440;
+      return dmg;
+    }
+    return 0;
   }
 
   drawFloor(level) {
     const ctx = this.floorCtx;
-    const ts = 64;
+    const tiles = 16;
+    const ts = this.floorCanvas.width / tiles;
     const colors = level.tiles;
 
-    for (let x = 0; x < 8; x++) {
-      for (let y = 0; y < 8; y++) {
+    ctx.fillStyle = '#030208';
+    ctx.fillRect(0, 0, this.floorCanvas.width, this.floorCanvas.height);
+
+    for (let x = 0; x < tiles; x++) {
+      for (let y = 0; y < tiles; y++) {
         const idx = (x + y) % colors.length;
-        ctx.fillStyle = colors[idx];
-        ctx.fillRect(x * ts, y * ts, ts, ts);
+        const px = x * ts;
+        const py = y * ts;
+        const g = ctx.createLinearGradient(px, py, px + ts, py + ts);
+        g.addColorStop(0, colors[idx]);
+        g.addColorStop(0.55, colors[(idx + 1) % colors.length]);
+        g.addColorStop(1, colors[(idx + colors.length - 1) % colors.length]);
+        ctx.fillStyle = g;
+        ctx.fillRect(px, py, ts + 0.5, ts + 0.5);
 
         ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x * ts + 1, y * ts + 1, ts - 2, ts - 2);
+        ctx.lineWidth = 1.75;
+        ctx.strokeRect(px + 0.5, py + 0.5, ts - 1, ts - 1);
 
-        ctx.fillStyle = 'rgba(255,255,255,0.07)';
-        ctx.fillRect(x * ts + 3, y * ts + 3, ts - 6, ts / 3);
+        ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(px + 4, py + ts - 5);
+        ctx.lineTo(px + ts - 4, py + 5);
+        ctx.stroke();
+
+        const gloss = ctx.createLinearGradient(px, py, px, py + ts * 0.45);
+        gloss.addColorStop(0, 'rgba(255,255,255,0.14)');
+        gloss.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = gloss;
+        ctx.fillRect(px + 2, py + 2, ts - 4, ts * 0.38);
+
+        if (((x + y) & 3) === 0) {
+          ctx.fillStyle = 'rgba(255,255,255,0.04)';
+          ctx.fillRect(px, py + ts * 0.5, ts, 1);
+        }
       }
     }
+
+    const cx = this.floorCanvas.width / 2;
+    const cy = this.floorCanvas.height / 2;
+    const ring = ctx.createRadialGradient(cx, cy, ts * 0.5, cx, cy, cx * 0.95);
+    ring.addColorStop(0, 'rgba(255,255,255,0)');
+    ring.addColorStop(0.72, 'rgba(0,0,0,0)');
+    ring.addColorStop(1, 'rgba(0,0,0,0.45)');
+    ctx.fillStyle = ring;
+    ctx.fillRect(0, 0, this.floorCanvas.width, this.floorCanvas.height);
 
     this.floorTexture.needsUpdate = true;
   }
@@ -329,15 +455,15 @@ export class Arena {
         );
       }
 
-      const mantraCanvas = document.createElement('canvas');
-      mantraCanvas.width = 512;
-      mantraCanvas.height = 256;
-      const mantraCtx = mantraCanvas.getContext('2d');
-      const mantraTex = new THREE.CanvasTexture(mantraCanvas);
+      const decalCanvas = document.createElement('canvas');
+      decalCanvas.width = 512;
+      decalCanvas.height = 256;
+      const decalCtx = decalCanvas.getContext('2d');
+      const decalTex = new THREE.CanvasTexture(decalCanvas);
 
       const mantraPlane = new THREE.Mesh(
         new THREE.PlaneGeometry(size * 1.6, height * 0.7),
-        new THREE.MeshBasicMaterial({ map: mantraTex, side: THREE.DoubleSide, transparent: true, depthTest: true })
+        new THREE.MeshBasicMaterial({ map: decalTex, side: THREE.DoubleSide, transparent: true, depthTest: true })
       );
       mantraPlane.renderOrder = 100;
       const inset = 0.6;
@@ -349,10 +475,7 @@ export class Arena {
       mantraPlane.rotation.y = w.mantraRot ?? w.rot;
       this.scene.add(mantraPlane);
 
-      this.wallMantras.push({
-        texture: mantraTex, ctx: mantraCtx, canvas: mantraCanvas,
-        mantraIdx: Math.floor(Math.random() * MOCKERY_MANTRAS.length)
-      });
+      this.wallDecals.push({ texture: decalTex, ctx: decalCtx, canvas: decalCanvas });
 
       const neon = new THREE.Mesh(
         new THREE.BoxGeometry(size * 2, 0.12, 0.12),
@@ -365,58 +488,61 @@ export class Arena {
     });
   }
 
-  drawMantras() {
-    const level = LEVELS[this.currentLevel] || LEVELS[0];
-    const mColors = level.mantraColors;
+  drawDiscoWalls(level) {
+    const colors = level.sparkles;
+    const accents = level.mantraColors;
 
-    this.wallMantras.forEach((m, wallIdx) => {
-      const msg = MOCKERY_MANTRAS[m.mantraIdx % MOCKERY_MANTRAS.length];
+    this.wallDecals.forEach((m, wallIdx) => {
       const ctx = m.ctx;
       const w = m.canvas.width;
       const h = m.canvas.height;
+      const seed = (wallIdx + 1) * 1337 + (this.currentLevel + 1) * 911;
 
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+      ctx.fillStyle = 'rgba(6, 0, 14, 0.94)';
       ctx.fillRect(0, 0, w, h);
 
-      ctx.font = 'bold 52px "Arial Black", Impact, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-
-      const words = msg.split(' ');
-      const lines = [];
-      let line = '';
-      for (const word of words) {
-        const test = line ? line + ' ' + word : word;
-        if (ctx.measureText(test).width < w - 60) {
-          line = test;
-        } else {
-          if (line) lines.push(line);
-          line = word;
-        }
+      const stripes = 18;
+      for (let s = 0; s < stripes; s++) {
+        const x = (s / stripes) * w;
+        const bw = w / stripes + 1.5;
+        const c1 = colors[(s + wallIdx) % colors.length];
+        const c2 = colors[(s + 2 + wallIdx) % colors.length];
+        const g = ctx.createLinearGradient(x, 0, x + bw * 0.6, h);
+        g.addColorStop(0, c1 + '66');
+        g.addColorStop(0.45, c2 + '33');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(x, 0, bw, h);
       }
-      if (line) lines.push(line);
 
-      const lineHeight = 62;
-      const startY = (h - lines.length * lineHeight) / 2 + lineHeight / 2;
+      ctx.globalAlpha = 0.07;
+      for (let y = 0; y < h; y += 5) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, y, w, 1);
+      }
+      ctx.globalAlpha = 1;
 
-      lines.forEach((l, j) => {
-        const x = w / 2;
-        const y = startY + j * lineHeight;
-        const color = mColors[(j + wallIdx) % mColors.length];
+      const spotCount = 14;
+      for (let i = 0; i < spotCount; i++) {
+        const sx = ((seed * (i + 3)) % 1000) / 1000 * (w - 48) + 24;
+        const sy = ((seed * (i + 7) + i * 19) % 1000) / 1000 * (h - 48) + 24;
+        const rad = 14 + ((seed + i * 37) % 36);
+        const ac = accents[i % accents.length];
+        const rg = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad);
+        rg.addColorStop(0, ac + 'dd');
+        rg.addColorStop(0.35, ac + '55');
+        rg.addColorStop(1, 'transparent');
+        ctx.fillStyle = rg;
+        ctx.beginPath();
+        ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 20;
+      ctx.strokeStyle = accents[wallIdx % accents.length] + '99';
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(6, 6, w - 12, h - 12);
 
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 8;
-        ctx.strokeText(l, x, y);
-
-        ctx.fillStyle = color;
-        ctx.fillText(l, x, y);
-      });
-
-      ctx.shadowBlur = 0;
       m.texture.needsUpdate = true;
     });
   }
@@ -436,7 +562,15 @@ export class Arena {
 
     if (this.baseMesh) this.baseMesh.material.color.set(level.bg);
 
-    this.mantraDirty = true;
+    this.drawDiscoWalls(level);
+
+    const neon = new THREE.Color(level.neon);
+    if (this.floorMat) {
+      this.floorMat.emissive.copy(neon);
+      this.floorMat.emissiveIntensity = 0.04;
+    }
+
+    this.buildHazards(this.currentLevel);
     return level;
   }
 
@@ -445,22 +579,11 @@ export class Arena {
   }
 
   update(deltaTime) {
+    if (this.asteroids.length) this.updateHazards(deltaTime);
+
     const pulse = Math.sin(performance.now() / 400) * 0.5 + 0.5;
-    const b = 0.85 + pulse * 0.15;
-    this.floorMesh.material.color.setRGB(b, b, b);
-
-    this.mantraRotateTime += deltaTime * 1000;
-    if (this.mantraRotateTime > this.mantraRotateInterval) {
-      this.mantraRotateTime = 0;
-      this.wallMantras.forEach(m => {
-        m.mantraIdx = Math.floor(Math.random() * MOCKERY_MANTRAS.length);
-      });
-      this.mantraDirty = true;
-    }
-
-    if (this.mantraDirty) {
-      this.mantraDirty = false;
-      this.drawMantras();
+    if (this.floorMat) {
+      this.floorMat.emissiveIntensity = 0.03 + pulse * 0.09;
     }
 
     this.planets.forEach(p => p.rotation.y += deltaTime * 0.1);

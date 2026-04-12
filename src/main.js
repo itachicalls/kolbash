@@ -9,9 +9,14 @@ import { Player } from './player.js';
 import { EnemyManager } from './enemy.js';
 import { Weapon, WEAPON_DEFS } from './weapon.js';
 import { ItemManager } from './items.js';
-import { WaveManager } from './waves.js';
+import { WaveManager, TOTAL_WAVES } from './waves.js';
 import { UIManager, STORE_ITEMS } from './ui.js';
 import { Arena, LEVELS } from './arena.js';
+import { DeathScene } from './death-scene.js';
+import { DareBackupDancers } from './dare-backup-dancers.js';
+import { SpecialAttackController, SPECIAL_CHARGE_KILLS } from './special-attack.js';
+import { GameMusic } from './game-music.js';
+import { WaveClearCinematic } from './wave-clear-cinematic.js';
 
 class Game {
   constructor() {
@@ -25,25 +30,53 @@ class Game {
     this.clock = new THREE.Clock();
 
     this.isMobile = ('ontouchstart' in window) && (window.innerWidth < 1200);
+    const dm = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined;
+    const hc = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined;
+    this.isLowTierMobile =
+      this.isMobile && (((dm != null && dm <= 4) || (hc != null && hc <= 4)));
 
     this.currentLevelEffect = null;
     this.poisonTickTime = 0;
 
     this.allyShips = [];
     this.allyProjectiles = [];
-    this.allyProjGeo = new THREE.SphereGeometry(0.06, 4, 3);
+    this.allyBoltGeo = new THREE.IcosahedronGeometry(0.11, 1);
+    this.allyBoltMat = new THREE.MeshStandardMaterial({
+      color: 0xccfff0,
+      emissive: 0x00ffaa,
+      emissiveIntensity: 0.95,
+      metalness: 0.5,
+      roughness: 0.22
+    });
+    this.gameMusic = null;
     this.allyShipDuration = 18000;
     this.allyDurUpgrades = 0;
 
     this.unlockedWeapons = ['disco'];
     this.currentWeapon = 'disco';
     this.healthUpgrades = 0;
+
+    this.deathScene = null;
+    this.deathSequenceActive = false;
+    this.dareDancers = null;
+
+    this.specialAttack = null;
+    this.specialAttackActive = false;
+    this.specialCharge = 0;
+    this.specialReady = false;
   }
 
   async init() {
     this.ui = new UIManager();
+    this.ui.showLoading();
+    this.ui.updateLoadingProgress('Booting renderer…');
+
+    await new Promise(r => requestAnimationFrame(r));
 
     this.createScene();
+    this.gameMusic.setStateChangeHandler(() => this.ui.syncMusicButton?.());
+    this.ui.bindMusic(this.gameMusic);
+    this.ui.updateLoadingProgress('Physics & arena…');
     this.createPhysics();
     this.createPlayer();
     this.createWeapon();
@@ -51,22 +84,47 @@ class Game {
     this.createManagers();
     this.setupEventListeners();
 
-    this.ui.showStartScreen();
+    this.ui.onSpecialActivate = () => this.trySpecialAttack();
+
     const btn = document.querySelector('#start-screen .start-btn');
     if (btn) {
-      btn.textContent = 'LOADING...';
+      btn.textContent = 'LOADING…';
       btn.style.opacity = '0.5';
       btn.style.cursor = 'wait';
     }
 
     try {
-      await this.preloadModels();
-      await this.enemyManager.warmPool(4);
+      this.ui.updateLoadingProgress('Loading character models…');
+      await this.preloadModels((done, total) => {
+        this.ui.updateLoadingProgress(`Models ${done} / ${total}`);
+      });
+      this.ui.updateLoadingProgress('Warming enemy pool…');
+      const poolN = this.isMobile ? 2 : 4;
+      await this.enemyManager.warmPool(poolN);
+      const parallel = [
+        this.deathScene.preload().catch(() => {}),
+        this.dareDancers.preload().catch(() => {}),
+        this.specialAttack.preload().catch(() => {})
+      ];
+      if (!this.isMobile) {
+        parallel.push(this.waveClear.preload().catch(() => {}));
+      }
+      await Promise.all(parallel);
+      if (this.isMobile) {
+        this.ui.updateLoadingProgress('Ready — extra assets load quietly');
+        const kick = () => this.waveClear.preload().catch(() => {});
+        if (typeof requestIdleCallback === 'function') {
+          requestIdleCallback(() => kick(), { timeout: 8000 });
+        } else {
+          setTimeout(kick, 400);
+        }
+      }
     } catch (e) {
       console.warn('Model loading issue:', e);
     }
 
     this.modelsReady = true;
+    this.ui.showStartScreen();
     if (btn) {
       btn.textContent = this.isMobile ? 'TAP TO PLAY' : 'ENTER THE FLOOR';
       btn.style.opacity = '1';
@@ -86,26 +144,38 @@ class Game {
     this.camera.position.set(0, 2, 0);
     this.scene.add(this.camera);
 
+    const maxPR = this.isMobile ? (this.isLowTierMobile ? 1 : 1.25) : 1;
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
-      powerPreference: 'high-performance',
+      powerPreference: this.isMobile ? 'low-power' : 'high-performance',
       stencil: false,
       alpha: false
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.isMobile ? 1.5 : 1));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPR));
     this.renderer.shadowMap.enabled = false;
     this.renderer.autoClear = true;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
+    if ('outputColorSpace' in this.renderer) {
+      this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    }
 
     document.getElementById('game-container').appendChild(this.renderer.domElement);
     this.createLighting();
+
+    this.deathScene = new DeathScene();
+    this.dareDancers = new DareBackupDancers();
+    this.specialAttack = new SpecialAttackController(this.scene);
+    this.gameMusic = new GameMusic();
+    this.waveClear = new WaveClearCinematic(this.scene, this.camera);
   }
 
   createLighting() {
-    const ambient = new THREE.AmbientLight(0xffffff, 1.0);
+    const ambient = new THREE.AmbientLight(0xffffff, 1.05);
     this.scene.add(ambient);
 
-    const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+    const sun = new THREE.DirectionalLight(0xffffff, 0.72);
     sun.position.set(5, 15, 5);
     this.scene.add(sun);
 
@@ -121,7 +191,7 @@ class Game {
 
   createPlayer() {
     this.player = new Player(this.camera, this.physicsWorld, document.body);
-    this.player.onDeathCallback = () => this.gameOver();
+    this.player.onDeathCallback = () => this.beginDeathSequence();
   }
 
   createWeapon() {
@@ -144,7 +214,8 @@ class Game {
     this.waveManager.onWaveStart = (wave, taunt, levelChanged) => {
       this.ui.updateWave(wave);
       const levelName = this.arena.getLevelName();
-      this.ui.showWaveAnnouncement(wave, taunt, levelName, levelChanged);
+      const finalTaunt = wave === TOTAL_WAVES ? 'FINAL WAVE — END THE DISCO' : taunt;
+      this.ui.showWaveAnnouncement(wave, finalTaunt, levelName, levelChanged);
       this.ui.updateLevelName(levelName);
     };
 
@@ -159,7 +230,30 @@ class Game {
       this.score += wave * 100;
       this.ui.updateScore(this.score);
       this.enemyManager.replenishPool();
-      this.showDareScreen(wave);
+      if (wave >= TOTAL_WAVES) {
+        this.showVictory();
+      } else {
+        if (this.specialAttackActive) {
+          this.specialAttack.stop();
+          this.specialAttackActive = false;
+          this.player.inputFrozen = false;
+        }
+        this.player.inputFrozen = true;
+        this.weapon.isHolding = false;
+        if (!this.isMobile && document.pointerLockElement) {
+          document.exitPointerLock();
+        }
+        this.player.controls.unlock();
+        const yaw = this.getPlayerYaw();
+        const goDare = () => {
+          this.player.inputFrozen = false;
+          this.showDareScreen(wave);
+        };
+        (async () => {
+          await this.waveClear.ensureLoaded().catch(() => {});
+          this.waveClear.start(wave, this.player, yaw, goDare);
+        })();
+      }
     };
   }
 
@@ -207,7 +301,7 @@ class Game {
     }, 250);
   }
 
-  async preloadModels() {
+  async preloadModels(onProgress) {
     const models = [
       '/models/alon_dancing.fbx',
       '/models/slingoor_dance.fbx',
@@ -216,9 +310,13 @@ class Game {
       '/models/marcell_dancing.fbx',
       '/models/thriller_part3.fbx'
     ];
-    await Promise.all(models.map(path =>
-      this.enemyManager.loadFBX(path).catch(() => {})
-    ));
+    let done = 0;
+    for (let i = 0; i < models.length; i++) {
+      await this.enemyManager.loadFBX(models[i]).catch(() => {});
+      done++;
+      onProgress?.(done, models.length);
+      if (i % 2 === 1) await new Promise(r => requestAnimationFrame(r));
+    }
   }
 
   setupEventListeners() {
@@ -242,6 +340,9 @@ class Game {
     }
 
     document.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyE' && this.isRunning) {
+        this.trySpecialAttack();
+      }
       const num = parseInt(e.key);
       if (num >= 1 && num <= 4) {
         const weapons = ['disco', 'gatling', 'laser', 'rocket'];
@@ -257,6 +358,10 @@ class Game {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    if (this.deathSequenceActive && this.deathScene) {
+      this.deathScene.camera.aspect = this.camera.aspect;
+      this.deathScene.camera.updateProjectionMatrix();
+    }
   }
 
   switchWeapon(type) {
@@ -274,17 +379,47 @@ class Game {
 
   // ── Dare Screen & Store ──
 
+  showVictory() {
+    this.isRunning = false;
+    this.clearAllyShips();
+
+    if (!this.isMobile && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+    if (this.isMobile) {
+      document.getElementById('mobile-controls')?.style.setProperty('display', 'none');
+    }
+
+    this.score += 5000;
+    this.ui.updateScore(this.score);
+
+    this.ui.showVictory({
+      score: this.score,
+      kills: this.kills,
+      damageDealt: this.damageDealt,
+      coins: this.coins
+    }, () => location.reload());
+  }
+
   showDareScreen(wave) {
     this.isRunning = false;
+    this.player.inputFrozen = false;
 
     if (!this.isMobile && document.pointerLockElement) {
       document.exitPointerLock();
     }
 
     this.ui.showDareScreen(wave,
-      () => this.resumeNextWave(),
-      () => this.showStore()
+      () => {
+        this.dareDancers.hide();
+        this.resumeNextWave();
+      },
+      () => {
+        this.dareDancers.hide();
+        this.showStore();
+      }
     );
+    requestAnimationFrame(() => this.dareDancers.show());
   }
 
   showStore() {
@@ -326,6 +461,7 @@ class Game {
   }
 
   resumeNextWave() {
+    this.dareDancers?.hide();
     this.ui.hideAllOverlays();
     this.isRunning = true;
     this.clock.start();
@@ -345,6 +481,9 @@ class Game {
     if (this.isRunning) return;
     if (!this.modelsReady) return;
 
+    this.deathSequenceActive = false;
+    if (this.deathScene?.active) this.deathScene.stop();
+
     this.score = 0;
     this.coins = 0;
     this.kills = 0;
@@ -358,6 +497,15 @@ class Game {
     this.unlockedWeapons = ['disco'];
     this.currentWeapon = 'disco';
     this.weapon.setWeapon('disco');
+    this.specialAttackActive = false;
+    this.specialCharge = 0;
+    this.specialReady = false;
+    this.player.inputFrozen = false;
+    this.specialAttack?.stop();
+    this.waveClear?.stop(false);
+    this.ui.setSpecialReady(false);
+    this.ui.updateSpecialCharge(0, SPECIAL_CHARGE_KILLS);
+
     this.player.maxHealth = 300;
     this.player.reset();
     this.enemyManager.clear();
@@ -383,6 +531,10 @@ class Game {
     this.isRunning = true;
     this.clock.start();
 
+    this.gameMusic?.stop();
+    this.gameMusic?.start();
+    this.ui.syncMusicButton?.();
+
     setTimeout(() => {
       if (this.isRunning) this.waveManager.startNextWave(this.player.getPosition());
     }, 1000);
@@ -392,6 +544,15 @@ class Game {
 
   onEnemyKilled(enemy) {
     this.kills++;
+
+    if (!this.specialAttackActive && this.specialAttack?.cache && this.specialCharge < SPECIAL_CHARGE_KILLS) {
+      this.specialCharge++;
+      this.ui.updateSpecialCharge(this.specialCharge, SPECIAL_CHARGE_KILLS);
+      if (this.specialCharge >= SPECIAL_CHARGE_KILLS && this.specialAttack.canStart()) {
+        this.specialReady = true;
+        this.ui.setSpecialReady(true);
+      }
+    }
 
     const isBoss = enemy.userData.type.isBoss;
     const scoreMultiplier = isBoss ? 5 : 1;
@@ -419,6 +580,7 @@ class Game {
   }
 
   handleShooting(playerPos) {
+    if (this.specialAttackActive) return;
     if (!this.player.controls.isLocked) return;
 
     const shot = this.weapon.tryFire(this.player.rapidFire);
@@ -428,7 +590,7 @@ class Game {
     const dir = shot.direction;
 
     let closestEnemy = null;
-    let closestDist = 60;
+    let closestDistSq = 60 * 60;
     const dx = dir.x, dz = dir.z;
     const dirLen = Math.sqrt(dx * dx + dz * dz) || 1;
 
@@ -437,12 +599,13 @@ class Game {
       if (enemy.userData.isDead) continue;
       const ex = enemy.position.x - muzzlePos.x;
       const ez = enemy.position.z - muzzlePos.z;
-      const dist = Math.sqrt(ex * ex + ez * ez);
-      if (dist > closestDist) continue;
+      const distSq = ex * ex + ez * ez;
+      if (distSq > closestDistSq) continue;
+      const dist = Math.sqrt(distSq);
       const dot = (ex * (dx / dirLen) + ez * (dz / dirLen)) / dist;
       if (dot > 0.94) {
         closestEnemy = enemy;
-        closestDist = dist;
+        closestDistSq = distSq;
       }
     }
 
@@ -522,35 +685,94 @@ class Game {
   spawnAllyShip() {
     const ship = new THREE.Group();
 
-    const bodyMat = new THREE.MeshBasicMaterial({ color: 0x44ffaa });
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.8, 0.12, 12), bodyMat);
-    ship.add(body);
+    const hullMat = new THREE.MeshStandardMaterial({
+      color: 0x1a3048,
+      metalness: 0.78,
+      roughness: 0.26,
+      emissive: 0x002830,
+      emissiveIntensity: 0.32
+    });
+    const saucer = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.76, 0.15, 28, 1), hullMat);
+    ship.add(saucer);
 
-    const domeMat = new THREE.MeshBasicMaterial({ color: 0x88ffdd, transparent: true, opacity: 0.7 });
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
-    dome.position.y = 0.06;
+    const rimMat = new THREE.MeshStandardMaterial({
+      color: 0x44ffcc,
+      metalness: 0.55,
+      roughness: 0.2,
+      emissive: 0x00ffaa,
+      emissiveIntensity: 0.55
+    });
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.66, 0.042, 10, 52), rimMat);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = -0.04;
+    ship.add(rim);
+
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0xaaeeff,
+      metalness: 0.2,
+      roughness: 0.06,
+      emissive: 0x66ffff,
+      emissiveIntensity: 0.45,
+      transparent: true,
+      opacity: 0.74
+    });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.34, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2), glassMat);
+    dome.position.y = 0.08;
     ship.add(dome);
 
-    const rimColors = [0xff0088, 0x00ff88, 0x8800ff, 0xffff00, 0x00ffff, 0xff6600];
+    const innerRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.2, 0.022, 6, 28),
+      new THREE.MeshStandardMaterial({
+        color: 0xff00aa,
+        emissive: 0xff0088,
+        emissiveIntensity: 0.85,
+        metalness: 0.35,
+        roughness: 0.38
+      })
+    );
+    innerRing.rotation.x = Math.PI / 2;
+    innerRing.position.y = 0.02;
+    ship.add(innerRing);
+
+    const navColors = [0xff0088, 0x00ff88, 0x8800ff, 0xffff00, 0x00ffff, 0xff6600];
     for (let i = 0; i < 6; i++) {
       const angle = (i / 6) * Math.PI * 2;
       const dot = new THREE.Mesh(
-        new THREE.SphereGeometry(0.04, 4, 3),
-        new THREE.MeshBasicMaterial({ color: rimColors[i] })
+        new THREE.SphereGeometry(0.045, 6, 5),
+        new THREE.MeshStandardMaterial({
+          color: navColors[i],
+          emissive: navColors[i],
+          emissiveIntensity: 0.9,
+          metalness: 0.2,
+          roughness: 0.35
+        })
       );
-      dot.position.set(Math.cos(angle) * 0.65, -0.02, Math.sin(angle) * 0.65);
+      dot.position.set(Math.cos(angle) * 0.62, -0.02, Math.sin(angle) * 0.62);
       ship.add(dot);
     }
 
-    const beamMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.15 });
-    const beam = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.5, 6), beamMat);
-    beam.position.y = -0.85;
+    const beam = new THREE.Mesh(
+      new THREE.ConeGeometry(0.38, 1.55, 10, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0x00ffaa,
+        transparent: true,
+        opacity: 0.2,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      })
+    );
+    beam.position.y = -0.88;
     beam.rotation.x = Math.PI;
     ship.add(beam);
 
-    const light = new THREE.PointLight(0x00ff88, 0.4, 8);
-    light.position.y = -0.3;
-    ship.add(light);
+    const engine = new THREE.PointLight(0x00ffcc, 0.62, 16);
+    engine.position.y = -0.52;
+    ship.add(engine);
+
+    const cockpit = new THREE.PointLight(0xff66ff, 0.38, 9);
+    cockpit.position.y = 0.32;
+    ship.add(cockpit);
 
     const dur = this.allyShipDuration;
     ship.userData = {
@@ -561,7 +783,8 @@ class Game {
       orbitAngle: Math.random() * Math.PI * 2,
       orbitRadius: 4,
       orbitHeight: 3.5,
-      orbitSpeed: 1.5
+      orbitSpeed: 1.5,
+      rim
     };
 
     this.scene.add(ship);
@@ -578,7 +801,11 @@ class Game {
       if (now - data.spawnTime > data.duration) {
         this.scene.remove(ship);
         ship.traverse(c => {
-          if (c.isMesh) { c.geometry?.dispose(); c.material?.dispose(); }
+          if (c.isMesh) {
+            c.geometry?.dispose();
+            if (c.material && !Array.isArray(c.material)) c.material.dispose();
+            else if (Array.isArray(c.material)) c.material.forEach(m => m.dispose?.());
+          }
           if (c.isLight) c.dispose?.();
         });
         this.allyShips.splice(i, 1);
@@ -592,6 +819,10 @@ class Game {
         playerPos.z + Math.sin(data.orbitAngle) * data.orbitRadius
       );
       ship.rotation.y += deltaTime * 2;
+      if (data.rim) {
+        const pulse = 1 + Math.sin(now * 0.0035) * 0.05;
+        data.rim.scale.setScalar(pulse);
+      }
 
       let nearest = null;
       let nearestDist = 30;
@@ -615,11 +846,13 @@ class Game {
       proj.position.x += v.x * deltaTime;
       proj.position.y += v.y * deltaTime;
       proj.position.z += v.z * deltaTime;
+      proj.rotation.x += deltaTime * 11;
+      proj.rotation.y += deltaTime * 8;
       proj.userData.life -= deltaTime;
 
       if (proj.userData.life <= 0) {
         this.scene.remove(proj);
-        proj.material.dispose();
+        if (!proj.userData.sharedBoltMat) proj.material?.dispose();
         this.allyProjectiles.splice(i, 1);
         continue;
       }
@@ -632,7 +865,7 @@ class Game {
           this.damageDealt += proj.userData.damage;
           this.enemyManager.damageEnemy(enemy, proj.userData.damage);
           this.scene.remove(proj);
-          proj.material.dispose();
+          if (!proj.userData.sharedBoltMat) proj.material?.dispose();
           this.allyProjectiles.splice(i, 1);
           break;
         }
@@ -641,17 +874,15 @@ class Game {
   }
 
   allyShipFire(ship, target) {
-    if (this.allyProjectiles.length >= 8) return;
+    if (this.allyProjectiles.length >= 10) return;
     const dir = new THREE.Vector3().subVectors(target.position, ship.position).normalize();
-    const proj = new THREE.Mesh(
-      this.allyProjGeo,
-      new THREE.MeshBasicMaterial({ color: 0x00ff88 })
-    );
+    const proj = new THREE.Mesh(this.allyBoltGeo, this.allyBoltMat);
     proj.position.copy(ship.position);
     proj.userData = {
       velocity: dir.multiplyScalar(18),
       life: 2,
-      damage: 15
+      damage: 15,
+      sharedBoltMat: true
     };
     this.scene.add(proj);
     this.allyProjectiles.push(proj);
@@ -667,7 +898,6 @@ class Game {
     this.allyShips = [];
     for (const p of this.allyProjectiles) {
       this.scene.remove(p);
-      p.material?.dispose();
     }
     this.allyProjectiles = [];
   }
@@ -710,7 +940,19 @@ class Game {
     }
   }
 
+  handleArenaTraps(playerPos) {
+    if (this.specialAttackActive) return;
+    if (!this.arena || !this.isRunning) return;
+    const now = performance.now();
+    const dmg = this.arena.pollTrapDamage(playerPos.x, playerPos.z, playerPos.y, now);
+    if (dmg <= 0) return;
+    this.player.takeDamage(dmg);
+    this.ui.updateHealth(this.player.health, this.player.maxHealth);
+    this.screenShake = Math.min(this.screenShake + 0.35, 1);
+  }
+
   handleEnemyDamage(playerPos) {
+    if (this.specialAttackActive) return;
     const now = performance.now();
     const px = playerPos.x, pz = playerPos.z;
     let tookDamage = false;
@@ -762,9 +1004,87 @@ class Game {
     this.ui.updatePowerup('alienShip', shipTime);
   }
 
-  gameOver() {
+  getPlayerYaw() {
+    if (this.player.isMobile) return this.player.cameraYaw;
+    const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    euler.setFromQuaternion(this.camera.quaternion);
+    return euler.y;
+  }
+
+  trySpecialAttack() {
+    if (!this.isRunning || this.player.isDead || this.specialAttackActive) return;
+    if (!this.specialReady || !this.specialAttack?.canStart()) return;
+
+    this.specialReady = false;
+    this.specialCharge = 0;
+    this.ui.setSpecialReady(false);
+    this.ui.updateSpecialCharge(0, SPECIAL_CHARGE_KILLS);
+
+    this.specialAttackActive = true;
+    this.player.inputFrozen = true;
+    this.weapon.isHolding = false;
+    if (!this.isMobile && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+    this.player.controls.unlock();
+
+    const yaw = this.getPlayerYaw();
+    this.specialAttack.start(yaw, this.enemyManager, {
+      onDamage: (amt) => {
+        this.damageDealt += amt;
+      },
+      onEnd: () => {
+        this.specialAttackActive = false;
+        this.player.inputFrozen = false;
+        this.screenShake = Math.min(this.screenShake + 0.4, 1.1);
+        if (this.isRunning && !this.player.isDead) {
+          if (this.isMobile) {
+            this.player.controls.lock();
+            document.getElementById('mobile-controls')?.style.setProperty('display', 'block');
+          } else {
+            this.player.controls.lock();
+          }
+        }
+      }
+    });
+  }
+
+  beginDeathSequence() {
+    if (this.deathSequenceActive) return;
+    if (this.specialAttackActive) {
+      this.specialAttack.stop();
+      this.specialAttackActive = false;
+      this.player.inputFrozen = false;
+    }
+    this.waveClear?.stop(false);
     this.isRunning = false;
+    this.deathSequenceActive = true;
+
     this.clearAllyShips();
+    if (this.isMobile) {
+      document.getElementById('mobile-controls')?.style.setProperty('display', 'none');
+    }
+    document.getElementById('hud')?.style.setProperty('display', 'none');
+
+    const yaw = this.getPlayerYaw();
+
+    this.deathScene.clock.start();
+    this.deathScene.clock.getDelta();
+
+    this.deathScene.start(this.renderer, this.camera.aspect, yaw, () => {
+      this.deathSequenceActive = false;
+      if (this.scene.background instanceof THREE.Color) {
+        this.renderer.setClearColor(this.scene.background, 1);
+      } else {
+        this.renderer.setClearColor(0x000000, 1);
+      }
+      this.showGameOverAfterDeath();
+    });
+
+    requestAnimationFrame(() => this.animateDeath());
+  }
+
+  showGameOverAfterDeath() {
     if (this.isMobile) {
       document.getElementById('mobile-controls')?.style.setProperty('display', 'none');
     }
@@ -777,7 +1097,26 @@ class Game {
     });
   }
 
+  animateDeath() {
+    if (!this.deathSequenceActive) return;
+    requestAnimationFrame(() => this.animateDeath());
+    const delta = Math.min(this.deathScene.clock.getDelta(), 0.08);
+    this.deathScene.update(this.renderer, delta);
+  }
+
   animate() {
+    if (this.isRunning && this.waveClear?.active) {
+      requestAnimationFrame(() => this.animate());
+      const delta = Math.min(this.clock.getDelta(), 0.06);
+      const playerPos = this.player.getPosition();
+      this.physicsWorld.update(delta);
+      this.player.update(delta);
+      this.updateAllyShips(delta, playerPos);
+      this.waveClear.update(delta);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
     if (!this.isRunning) return;
 
     requestAnimationFrame(() => this.animate());
@@ -787,11 +1126,35 @@ class Game {
 
     this.physicsWorld.update(delta);
     this.player.update(delta);
+
+    if (this.specialAttackActive) {
+      this.specialAttack.update(delta, this.player, this.camera);
+      this.weapon.update(delta);
+      if (this.arena) this.arena.update(delta);
+      this.enemyManager.update(delta, playerPos);
+      this.itemManager.update(delta, playerPos);
+      this.handleItemPickups(playerPos);
+      this.waveManager.update(delta, playerPos);
+      this.updateAllyShips(delta, playerPos);
+      this.updateLevelEffects(delta, playerPos);
+
+      if (this._uiTick === undefined) this._uiTick = 0;
+      this._uiTick++;
+      if (this._uiTick % 3 === 0) {
+        this.updatePowerupUI();
+        this.ui.updateStats(this.kills, this.damageDealt);
+      }
+
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
     this.weapon.update(delta);
     if (this.arena) this.arena.update(delta);
     this.handleShooting(playerPos);
     this.enemyManager.update(delta, playerPos);
     this.handleEnemyDamage(playerPos);
+    this.handleArenaTraps(playerPos);
     this.itemManager.update(delta, playerPos);
     this.handleItemPickups(playerPos);
     this.waveManager.update(delta, playerPos);
@@ -818,4 +1181,7 @@ class Game {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => new Game().init());
+document.addEventListener('DOMContentLoaded', () => {
+  const game = new Game();
+  game.init().catch(err => console.error(err));
+});

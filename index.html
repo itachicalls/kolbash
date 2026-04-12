@@ -31,7 +31,7 @@
     #start-screen {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
       background: radial-gradient(ellipse at 30% 50%, #1a0530 0%, #0a0a0f 70%);
-      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      display: none; flex-direction: column; justify-content: center; align-items: center;
       z-index: 1000; cursor: pointer; overflow: hidden;
     }
 
@@ -82,6 +82,13 @@
       position: absolute; bottom: 2.5rem; color: #555; font-size: 0.85rem;
       display: flex; gap: 0.5rem; align-items: center;
     }
+
+    .music-credit {
+      position: absolute; bottom: 0.85rem; left: 50%; transform: translateX(-50%);
+      max-width: 92vw; text-align: center; font-size: 0.62rem; color: #444;
+      letter-spacing: 0.04em; line-height: 1.35;
+    }
+    .music-credit a { color: #666; pointer-events: auto; }
 
     .controls-info .key {
       padding: 0.25rem 0.6rem; background: rgba(255,255,255,0.08);
@@ -151,6 +158,110 @@
       letter-spacing: 0.12em; white-space: nowrap;
     }
     #weapon-name { color: #00ffff; }
+
+    #special-charge-wrap {
+      position: absolute; top: 120px; right: 18px; width: 120px; z-index: 105;
+      pointer-events: none;
+    }
+    #special-charge-wrap .special-label {
+      font-family: 'Orbitron', monospace; font-size: 0.55rem; color: #666;
+      letter-spacing: 0.12em; margin-bottom: 0.2rem; text-align: right;
+    }
+    #special-charge-bg {
+      height: 5px; background: rgba(0,0,0,0.65); border: 1px solid rgba(255,0,200,0.25);
+      border-radius: 2px; overflow: hidden;
+    }
+    #special-charge-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #ff00aa, #00ffff);
+      transition: width 0.15s ease;
+    }
+
+    /* Disco Vortex: bottom-center circular tap target (out of the way of center aim) */
+    #special-vortex-orb {
+      display: none;
+      flex-direction: row;
+      position: fixed;
+      left: 50%;
+      bottom: 72px;
+      transform: translateX(-50%);
+      z-index: 165;
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      padding: 0;
+      cursor: pointer;
+      pointer-events: auto;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      background: rgba(0, 0, 0, 0.35);
+      align-items: center;
+      justify-content: center;
+    }
+    #special-vortex-orb .special-orb-glow {
+      position: absolute;
+      inset: -8px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 0, 200, 0.5) 0%, transparent 72%);
+      opacity: 0.4;
+      pointer-events: none;
+    }
+    #special-vortex-orb .special-orb-core {
+      position: relative;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #ff00cc, #7700ff, #00eeff);
+      box-shadow: inset 0 0 12px rgba(255, 255, 255, 0.25), 0 0 14px rgba(255, 0, 200, 0.55);
+      pointer-events: none;
+    }
+    #special-vortex-orb.special-vortex-ready .special-orb-glow {
+      animation: vortexGlow 0.65s ease-in-out infinite alternate;
+    }
+    #special-vortex-orb.special-vortex-ready .special-orb-core {
+      animation: vortexSpin 3.5s linear infinite;
+    }
+    #special-vortex-orb.special-vortex-ready {
+      border-color: rgba(0, 255, 255, 0.65);
+      box-shadow: 0 0 22px rgba(255, 0, 200, 0.55), 0 0 36px rgba(0, 255, 255, 0.25);
+    }
+    @keyframes vortexGlow {
+      from { opacity: 0.35; transform: scale(0.92); }
+      to { opacity: 0.85; transform: scale(1.08); }
+    }
+    @keyframes vortexSpin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    #special-vortex-orb:active { filter: brightness(1.12); }
+
+    #music-toggle-btn {
+      display: none;
+      flex-direction: row;
+      position: fixed;
+      top: 50px;
+      right: 12px;
+      z-index: 165;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      background: rgba(0, 0, 0, 0.72);
+      color: #e0e0e0;
+      font-size: 1.15rem;
+      line-height: 1;
+      cursor: pointer;
+      pointer-events: auto;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font-family: inherit;
+    }
+    #music-toggle-btn.music-off { opacity: 0.5; }
+    #music-toggle-btn:active { filter: brightness(1.15); }
 
     #health-container {
       position: absolute; bottom: 25px; left: 25px;
@@ -225,15 +336,30 @@
     /* ===== DARE SCREEN ===== */
     #dare-screen {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-      background: rgba(0,0,0,0.92); display: none; flex-direction: column;
+      background: rgba(0,0,0,0.88); display: none; flex-direction: column;
       justify-content: center; align-items: center; z-index: 300;
-      text-align: center;
+      text-align: center; overflow: hidden;
+      will-change: opacity;
     }
+
+    #dare-dancers-canvas {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      display: block; z-index: 0; pointer-events: none;
+    }
+
+    #dare-screen-front {
+      position: relative; z-index: 2;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      min-height: 55vh; max-width: 100%;
+      padding: 1rem; pointer-events: none;
+    }
+
+    #dare-screen-front .dare-buttons { pointer-events: auto; }
 
     #dare-screen::before {
       content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      background: radial-gradient(ellipse at center, rgba(255,0,100,0.08) 0%, transparent 70%);
-      pointer-events: none;
+      background: radial-gradient(ellipse at center 42%, rgba(255,0,100,0.12) 0%, transparent 55%);
+      pointer-events: none; z-index: 1;
     }
 
     #dare-wave-cleared {
@@ -375,6 +501,45 @@
     }
     #game-over .restart-btn:hover { transform: scale(1.05); filter: brightness(1.2); }
 
+    /* ===== VICTORY (campaign complete) ===== */
+    #victory-screen {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 8, 12, 0.96); display: none; flex-direction: column;
+      justify-content: center; align-items: center; z-index: 2100;
+      text-align: center; padding: 1rem;
+    }
+    #victory-screen::before {
+      content: ''; position: absolute; inset: 0;
+      background: radial-gradient(ellipse at 50% 30%, rgba(0, 255, 200, 0.12) 0%, transparent 55%);
+      pointer-events: none;
+    }
+    #victory-screen .vic-title {
+      font-family: 'Orbitron', monospace; font-size: 3.2rem; font-weight: 900;
+      background: linear-gradient(180deg, #00ffcc, #00aaff 45%, #ff00aa);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 24px rgba(0, 255, 200, 0.45));
+      margin-bottom: 0.35rem; position: relative; z-index: 1;
+    }
+    #victory-screen .vic-sub {
+      font-size: 0.95rem; color: #889; letter-spacing: 0.35em; margin-bottom: 2rem;
+      position: relative; z-index: 1;
+    }
+    #victory-screen .vic-stats {
+      display: flex; gap: 1.5rem; margin-bottom: 2.5rem; flex-wrap: wrap; justify-content: center;
+      position: relative; z-index: 1;
+    }
+    #victory-screen .vic-stat { text-align: center; min-width: 90px; }
+    #victory-screen .vic-stat .label { font-size: 0.65rem; color: #556; margin-bottom: 0.25rem; letter-spacing: 0.12em; }
+    #victory-screen .vic-stat .value { font-family: 'Orbitron', monospace; font-size: 1.35rem; color: #00ffff; }
+    #victory-done {
+      font-family: 'Orbitron', monospace; font-size: 1rem; padding: 0.85rem 3rem;
+      background: linear-gradient(90deg, #00ffaa, #00aaff); border: none;
+      color: #000; cursor: pointer; font-weight: 700; letter-spacing: 0.12em;
+      clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%);
+      transition: all 0.2s ease; pointer-events: auto; position: relative; z-index: 1;
+    }
+    #victory-done:hover { transform: scale(1.05); filter: brightness(1.15); }
+
     /* ===== LOADING ===== */
     #loading-screen {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -451,6 +616,7 @@
       .tagline { font-size: 0.8rem; margin-top: 1rem; margin-bottom: 2rem; }
       .start-btn { font-size: 0.9rem; padding: 0.8rem 2.5rem; }
       .controls-info { display: none; }
+      .music-credit { font-size: 0.5rem; bottom: 0.35rem; padding: 0 0.5rem; }
 
       #top-hud { gap: 0.3rem; flex-wrap: wrap; justify-content: center; max-width: 95vw; }
       .hud-box { padding: 0.3rem 0.5rem; }
@@ -461,6 +627,11 @@
       #level-effect { top: 70px; font-size: 0.55rem; }
 
       #weapon-hud { bottom: 55px; font-size: 0.55rem; padding: 0.2rem 0.8rem; }
+
+      #special-vortex-orb { bottom: 118px; width: 54px; height: 54px; }
+      #special-vortex-orb .special-orb-core { width: 40px; height: 40px; }
+      #music-toggle-btn { top: 46px; right: 8px; width: 38px; height: 38px; font-size: 1rem; }
+      #special-charge-wrap { top: 96px; right: 8px; width: 104px; }
 
       #health-container { bottom: 10px; left: 10px; }
       #health-bar-bg { width: 140px; height: 12px; }
@@ -553,13 +724,13 @@
   </style>
 </head>
 <body>
-  <div id="loading-screen" style="display: none;">
+  <div id="loading-screen" style="display: flex;">
     <div class="spinner"></div>
     <div class="loading-text">KOL BASH</div>
     <div id="loading-progress">Loading assets...</div>
   </div>
 
-  <div id="start-screen">
+  <div id="start-screen" style="display: none;">
     <div class="title-kol">KOL BASH</div>
     <div class="title-sub">DISCO MAYHEM</div>
     <p class="tagline">They came to groove. You came to destroy.</p>
@@ -570,7 +741,9 @@
       <span class="key">HOLD CLICK</span> Fire
       <span class="key">SPACE</span> Jump
       <span class="key">1-4</span> Weapons
+      <span class="key">E</span> Disco Vortex (11 kills)
     </div>
+    <p class="music-credit">Music: <a href="https://incompetech.com/music/royalty-free/music.html" target="_blank" rel="noopener">Funkorama</a> by Kevin MacLeod (CC BY 4.0) · Optional local file: <code>/public/audio/disco-floor.mp3</code></p>
   </div>
 
   <div id="game-container"></div>
@@ -580,7 +753,7 @@
     <div id="crosshair"><div class="dot"></div></div>
 
     <div id="top-hud">
-      <div class="hud-box" id="wave-display"><span class="label">Wave</span><span class="value" id="wave-number">1</span></div>
+      <div class="hud-box" id="wave-display"><span class="label">Wave</span><span class="value" id="wave-number">1 / 12</span></div>
       <div class="hud-box" id="score-display"><span class="label">Score</span><span class="value" id="score-value">0</span></div>
       <div class="hud-box" id="kills-display"><span class="label">Kills</span><span class="value" id="kills-value">0</span></div>
       <div class="hud-box" id="damage-display"><span class="label">DMG</span><span class="value" id="damage-value">0</span></div>
@@ -590,6 +763,11 @@
     <div id="level-effect"></div>
 
     <div id="weapon-hud"><span id="weapon-name">DISCO BLASTER</span></div>
+
+    <div id="special-charge-wrap">
+      <div class="special-label">DISCO VORTEX</div>
+      <div id="special-charge-bg"><div id="special-charge-fill"></div></div>
+    </div>
 
     <div id="health-container">
       <span id="health-label">HP</span>
@@ -605,6 +783,12 @@
       <div class="powerup-indicator" id="alien-ship-indicator"><div class="icon"></div><span class="name">ALLY SHIP</span><span class="timer">0.0s</span></div>
     </div>
 
+    <button type="button" id="music-toggle-btn" aria-label="Toggle music" title="Music">🎵</button>
+    <button type="button" id="special-vortex-orb" aria-label="Disco Vortex" title="Disco Vortex (full charge)">
+      <span class="special-orb-glow" aria-hidden="true"></span>
+      <span class="special-orb-core" aria-hidden="true"></span>
+    </button>
+
     <div id="wave-announcement">
       <h2>WAVE <span id="announce-wave-num">1</span></h2>
       <div class="wave-taunt" id="wave-taunt"></div>
@@ -614,12 +798,15 @@
 
   <!-- Dare Screen (between waves) -->
   <div id="dare-screen">
-    <div id="dare-wave-cleared">WAVE 1 CLEARED</div>
-    <div class="dare-title">DARE TO CONTINUE?</div>
-    <div id="dare-text">THE DISCO ISN'T DONE WITH YOU YET</div>
-    <div class="dare-buttons">
-      <button id="dare-continue">BRING IT ON</button>
-      <button id="dare-store">DISCO ARMORY</button>
+    <canvas id="dare-dancers-canvas" aria-hidden="true"></canvas>
+    <div id="dare-screen-front">
+      <div id="dare-wave-cleared">WAVE 1 CLEARED</div>
+      <div class="dare-title">DARE TO CONTINUE?</div>
+      <div id="dare-text">THE DISCO ISN'T DONE WITH YOU YET</div>
+      <div class="dare-buttons">
+        <button id="dare-continue">BRING IT ON</button>
+        <button id="dare-store">DISCO ARMORY</button>
+      </div>
     </div>
   </div>
 
@@ -656,6 +843,18 @@
       <div class="stat"><div class="label">Coins</div><div class="value" id="final-coins">0</div></div>
     </div>
     <button class="restart-btn" onclick="location.reload()">TRY AGAIN</button>
+  </div>
+
+  <div id="victory-screen">
+    <div class="vic-title">CHAOS CONQUERED</div>
+    <div class="vic-sub">ALL SIX FLOORS CLEARED — THE DISCO IS YOURS</div>
+    <div class="vic-stats">
+      <div class="vic-stat"><div class="label">Score</div><div class="value" id="vic-score">0</div></div>
+      <div class="vic-stat"><div class="label">Kills</div><div class="value" id="vic-kills">0</div></div>
+      <div class="vic-stat"><div class="label">Damage</div><div class="value" id="vic-damage">0</div></div>
+      <div class="vic-stat"><div class="label">Coins</div><div class="value" id="vic-coins">0</div></div>
+    </div>
+    <button type="button" id="victory-done">BACK TO TITLE</button>
   </div>
 
   <script type="module" src="/src/main.js"></script>

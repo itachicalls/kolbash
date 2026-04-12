@@ -50,6 +50,8 @@ export class Player {
 
     this.rapidFire = false;
     this.rapidFireEndTime = 0;
+
+    this.inputFrozen = false;
   }
 
   setupMobileTouch() {
@@ -199,6 +201,10 @@ export class Player {
   }
 
   onDeath() {
+    if (this.body) {
+      this.body.velocity.set(0, 0, 0);
+      if (this.body.angularVelocity) this.body.angularVelocity.set(0, 0, 0);
+    }
     this.controls.unlock();
     if (this.onDeathCallback) this.onDeathCallback();
   }
@@ -218,7 +224,14 @@ export class Player {
   }
 
   update(deltaTime) {
-    if (this.isDead || !this.controls.isLocked) return;
+    if (this.isDead) return;
+
+    if (this.inputFrozen) {
+      this.body.velocity.set(0, 0, 0);
+      return;
+    }
+
+    if (!this.controls.isLocked) return;
 
     if (this.isMobile) {
       const euler = new THREE.Euler(this.cameraPitch, this.cameraYaw, 0, 'YXZ');
@@ -281,6 +294,7 @@ export class Player {
   reset() {
     this.health = this.maxHealth;
     this.isDead = false;
+    this.inputFrozen = false;
     this.body.position.set(0, 3, 0);
     this.body.velocity.set(0, 0, 0);
     this.rapidFire = false;

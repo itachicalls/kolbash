@@ -3,6 +3,10 @@
  */
 
 import * as THREE from 'three';
+import { LEVELS } from './arena.js';
+
+/** Campaign length: 6 arenas × 2 waves each, then victory. */
+export const TOTAL_WAVES = LEVELS.length * 2;
 
 const WAVE_TAUNTS = [
   "WARM UP IS OVER",
@@ -42,15 +46,17 @@ export class WaveManager {
     this.timeBetweenWaves = 2500;
     this.lastWaveEndTime = 0;
 
-    this.baseEnemyCount = 4;
+    this.baseEnemyCount = 6;
     this.enemiesPerWaveIncrease = 2;
-    this.maxEnemiesPerWave = 14;
+    this.maxEnemiesPerWave = 16;
     this.healthMultiplierPerWave = 1.06;
     this.speedMultiplierPerWave = 1.02;
 
     this.spawnRadiusMin = 12;
     this.spawnRadiusMax = 22;
     this.spawnDelay = 400;
+    /** Tighter cadence for the first few waves (more bodies on the floor early). */
+    this.earlySpawnDelay = 300;
     this.minSpawnSpacing = 3;
 
     this.spawnQueue = [];
@@ -116,7 +122,7 @@ export class WaveManager {
   }
 
   getLevelForWave(wave) {
-    return Math.floor((wave - 1) / 2);
+    return Math.min(Math.floor((wave - 1) / 2), LEVELS.length - 1);
   }
 
   enforceSpacing(pos, existing) {
@@ -155,7 +161,9 @@ export class WaveManager {
       this.onLevelChange(newLevelIndex);
     }
 
-    this.playWaveStartSound();
+    requestAnimationFrame(() => this.playWaveStartSound());
+
+    this.spawnDelay = this.currentWave <= 4 ? this.earlySpawnDelay : 400;
 
     let forwardDir = new THREE.Vector3(0, 0, -1);
     if (this.playerCamera) {
@@ -179,8 +187,9 @@ export class WaveManager {
     bossPos.z = Math.max(-23, Math.min(23, bossPos.z));
     this.spawnQueue.push({ typeIndex: bossIndex, position: bossPos, isBoss: true });
 
+    const earlyExtra = this.currentWave <= 3 ? 1 : 0;
     const enemyCount = Math.min(
-      this.baseEnemyCount + Math.floor((this.currentWave - 1) * this.enemiesPerWaveIncrease),
+      this.baseEnemyCount + Math.floor((this.currentWave - 1) * this.enemiesPerWaveIncrease) + earlyExtra,
       this.maxEnemiesPerWave
     );
 
@@ -234,6 +243,8 @@ export class WaveManager {
 
     const taunt = WAVE_TAUNTS[Math.floor(Math.random() * WAVE_TAUNTS.length)];
     if (this.onWaveStart) this.onWaveStart(this.currentWave, taunt, levelChanged);
+
+    this.lastSpawnTime = performance.now();
   }
 
   getWaveModifiers() {
@@ -284,5 +295,6 @@ export class WaveManager {
     this.waveStartTime = 0;
     this.lastWaveEndTime = 0;
     this.spawnQueue = [];
+    this.lastSpawnTime = 0;
   }
 }
