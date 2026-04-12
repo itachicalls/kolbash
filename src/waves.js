@@ -361,10 +361,7 @@ export class WaveManager {
       if (enemy && !data.isBoss) {
         enemy.userData.health *= mods.health;
         enemy.userData.maxHealth = enemy.userData.health;
-        enemy.userData.type = {
-          ...enemy.userData.type,
-          speed: enemy.userData.type.speed * mods.speed
-        };
+        enemy.userData.waveSpeedMul = mods.speed;
       }
 
       this.lastSpawnTime = now;

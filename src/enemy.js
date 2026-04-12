@@ -47,6 +47,8 @@ export class EnemyManager {
     this.enemyProjectiles = [];
     this.maxEnemyProjectiles = opts.maxEnemyProjectiles ?? 10;
     this.enemyProjectileGeo = new THREE.TorusGeometry(0.08, 0.025, 6, 8);
+    /** Reuse MeshBasicMaterials by enemy color — never dispose per shot (mobile). */
+    this._enemyProjMatByColor = new Map();
     this.shootersThisWave = 0;
     this.maxShootersPerWave = opts.maxShootersPerWave ?? 3;
     this.poolReplenishTo = opts.poolReplenishTo ?? 3;
@@ -584,7 +586,8 @@ export class EnemyManager {
         const perp = this._perp;
         perp.set(-toPlayer.z, 0, toPlayer.x);
 
-        const spd = data.type.speed * speedMult * deltaTime;
+        const spdMul = (data.waveSpeedMul ?? 1) * (data.levelSpeedMul ?? 1);
+        const spd = data.type.speed * spdMul * speedMult * deltaTime;
         const behavior = data.type.behavior || 'standard';
         let mx = 0, mz = 0;
 
@@ -687,7 +690,6 @@ export class EnemyManager {
       proj.userData.life -= deltaTime;
       if (proj.userData.life <= 0) {
         this.scene.remove(proj);
-        proj.material.dispose();
         this.enemyProjectiles.splice(i, 1);
       }
     }
@@ -703,18 +705,24 @@ export class EnemyManager {
     if (dir.lengthSq() < 0.01) return;
     dir.normalize();
 
-    const proj = new THREE.Mesh(
-      this.enemyProjectileGeo,
-      new THREE.MeshBasicMaterial({ color: enemy.userData.type.color, side: THREE.DoubleSide })
-    );
+    const colorKey = enemy.userData.type.color;
+    let mat = this._enemyProjMatByColor.get(colorKey);
+    if (!mat) {
+      mat = new THREE.MeshBasicMaterial({ color: colorKey, side: THREE.DoubleSide });
+      this._enemyProjMatByColor.set(colorKey, mat);
+    }
+    const proj = new THREE.Mesh(this.enemyProjectileGeo, mat);
     proj.rotation.x = Math.PI / 2;
     proj.rotation.z = Math.PI / 2;
     proj.position.copy(enemy.position);
     proj.position.y = enemy.userData.scaledHeight * 0.6;
+    const baseDmg = enemy.userData.type.isBoss ? 8 : 4;
+    const dmg = Math.round(baseDmg * (enemy.userData.chaosMeleeMul ?? 1));
     proj.userData = {
       velocity: dir.clone().multiplyScalar(6),
-      damage: enemy.userData.type.isBoss ? 8 : 4,
-      life: 3
+      damage: dmg,
+      life: 3,
+      sharedEnemyProjMat: true
     };
     this.scene.add(proj);
     this.enemyProjectiles.push(proj);
@@ -750,7 +758,6 @@ export class EnemyManager {
     this.shootersThisWave = 0;
     for (const p of [...this.enemyProjectiles]) {
       this.scene.remove(p);
-      p.material.dispose();
     }
     this.enemyProjectiles = [];
   }

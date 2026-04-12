@@ -49,6 +49,8 @@ class Game {
 
     this.allyShips = [];
     this.allyProjectiles = [];
+    /** Shared GPU assets; ships are `clone(true)` — do not dispose per ship. */
+    this._allyShipTemplate = null;
     this.allyBoltGeo = null;
     this.allyBoltMat = null;
     this.gameMusic = null;
@@ -265,6 +267,123 @@ class Game {
     });
     this.gameMusic = new GameMusic();
     this.waveClear = new WaveClearCinematic(this.scene, this.camera);
+    this._buildAllyShipTemplate();
+  }
+
+  /**
+   * One-time ally UFO mesh graph: shared geometries/materials, no per-ship PointLights
+   * (mobile WebGL: dynamic lights + dispose loops fragment VRAM / risk context loss).
+   */
+  _buildAllyShipTemplate() {
+    if (this._allyShipTemplate) return;
+    const ship = new THREE.Group();
+
+    const hullMat = new THREE.MeshStandardMaterial({
+      color: 0x1a3048,
+      metalness: 0.78,
+      roughness: 0.26,
+      emissive: 0x003840,
+      emissiveIntensity: this.isMobile ? 0.55 : 0.32
+    });
+    const hullGeo = new THREE.CylinderGeometry(0.52, 0.76, 0.15, 28, 1);
+    ship.add(new THREE.Mesh(hullGeo, hullMat));
+
+    const rimMat = new THREE.MeshStandardMaterial({
+      color: 0x44ffcc,
+      metalness: 0.55,
+      roughness: 0.2,
+      emissive: 0x00ffaa,
+      emissiveIntensity: this.isMobile ? 0.72 : 0.55
+    });
+    const rimGeo = new THREE.TorusGeometry(0.66, 0.042, 10, 52);
+    const rim = new THREE.Mesh(rimGeo, rimMat);
+    rim.name = 'allyRim';
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = -0.04;
+    ship.add(rim);
+
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0xaaeeff,
+      metalness: 0.2,
+      roughness: 0.06,
+      emissive: 0x66ffff,
+      emissiveIntensity: 0.45,
+      transparent: true,
+      opacity: 0.74
+    });
+    const domeGeo = new THREE.SphereGeometry(0.34, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    const dome = new THREE.Mesh(domeGeo, glassMat);
+    dome.position.y = 0.08;
+    ship.add(dome);
+
+    const innerRingGeo = new THREE.TorusGeometry(0.2, 0.022, 6, 28);
+    const innerRingMat = new THREE.MeshStandardMaterial({
+      color: 0xff00aa,
+      emissive: 0xff0088,
+      emissiveIntensity: 0.85,
+      metalness: 0.35,
+      roughness: 0.38
+    });
+    const innerRing = new THREE.Mesh(innerRingGeo, innerRingMat);
+    innerRing.rotation.x = Math.PI / 2;
+    innerRing.position.y = 0.02;
+    ship.add(innerRing);
+
+    const navColors = [0xff0088, 0x00ff88, 0x8800ff, 0xffff00, 0x00ffff, 0xff6600];
+    const navDotGeo = new THREE.SphereGeometry(0.045, 6, 5);
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2;
+      const dotMat = new THREE.MeshStandardMaterial({
+        color: navColors[i],
+        emissive: navColors[i],
+        emissiveIntensity: 0.9,
+        metalness: 0.2,
+        roughness: 0.35
+      });
+      const dot = new THREE.Mesh(navDotGeo, dotMat);
+      dot.position.set(Math.cos(angle) * 0.62, -0.02, Math.sin(angle) * 0.62);
+      ship.add(dot);
+    }
+
+    const beamGeo = new THREE.ConeGeometry(0.38, 1.55, 10, 1, true);
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: 0x00ffaa,
+      transparent: true,
+      opacity: 0.2,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    const beam = new THREE.Mesh(beamGeo, beamMat);
+    beam.position.y = -0.88;
+    beam.rotation.x = Math.PI;
+    ship.add(beam);
+
+    const glowGeo = new THREE.SphereGeometry(0.14, 8, 6);
+    const engineGlowMat = new THREE.MeshBasicMaterial({
+      color: 0x00ffcc,
+      transparent: true,
+      opacity: 0.55,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const engineGlow = new THREE.Mesh(glowGeo, engineGlowMat);
+    engineGlow.position.y = -0.52;
+    ship.add(engineGlow);
+
+    const cockpitGlowMat = new THREE.MeshBasicMaterial({
+      color: 0xff66ff,
+      transparent: true,
+      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const cockpitGlow = new THREE.Mesh(glowGeo, cockpitGlowMat);
+    cockpitGlow.position.set(0, 0.32, 0);
+    cockpitGlow.scale.setScalar(0.65);
+    ship.add(cockpitGlow);
+
+    this._allyShipTemplate = ship;
   }
 
   createLighting() {
@@ -960,96 +1079,9 @@ class Game {
   // ── Ally Ship System ──
 
   spawnAllyShip() {
-    const ship = new THREE.Group();
-
-    const hullMat = new THREE.MeshStandardMaterial({
-      color: 0x1a3048,
-      metalness: 0.78,
-      roughness: 0.26,
-      emissive: 0x002830,
-      emissiveIntensity: 0.32
-    });
-    const saucer = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.76, 0.15, 28, 1), hullMat);
-    ship.add(saucer);
-
-    const rimMat = new THREE.MeshStandardMaterial({
-      color: 0x44ffcc,
-      metalness: 0.55,
-      roughness: 0.2,
-      emissive: 0x00ffaa,
-      emissiveIntensity: 0.55
-    });
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.66, 0.042, 10, 52), rimMat);
-    rim.rotation.x = Math.PI / 2;
-    rim.position.y = -0.04;
-    ship.add(rim);
-
-    const glassMat = new THREE.MeshStandardMaterial({
-      color: 0xaaeeff,
-      metalness: 0.2,
-      roughness: 0.06,
-      emissive: 0x66ffff,
-      emissiveIntensity: 0.45,
-      transparent: true,
-      opacity: 0.74
-    });
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.34, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2), glassMat);
-    dome.position.y = 0.08;
-    ship.add(dome);
-
-    const innerRing = new THREE.Mesh(
-      new THREE.TorusGeometry(0.2, 0.022, 6, 28),
-      new THREE.MeshStandardMaterial({
-        color: 0xff00aa,
-        emissive: 0xff0088,
-        emissiveIntensity: 0.85,
-        metalness: 0.35,
-        roughness: 0.38
-      })
-    );
-    innerRing.rotation.x = Math.PI / 2;
-    innerRing.position.y = 0.02;
-    ship.add(innerRing);
-
-    const navColors = [0xff0088, 0x00ff88, 0x8800ff, 0xffff00, 0x00ffff, 0xff6600];
-    for (let i = 0; i < 6; i++) {
-      const angle = (i / 6) * Math.PI * 2;
-      const dot = new THREE.Mesh(
-        new THREE.SphereGeometry(0.045, 6, 5),
-        new THREE.MeshStandardMaterial({
-          color: navColors[i],
-          emissive: navColors[i],
-          emissiveIntensity: 0.9,
-          metalness: 0.2,
-          roughness: 0.35
-        })
-      );
-      dot.position.set(Math.cos(angle) * 0.62, -0.02, Math.sin(angle) * 0.62);
-      ship.add(dot);
-    }
-
-    const beam = new THREE.Mesh(
-      new THREE.ConeGeometry(0.38, 1.55, 10, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: 0x00ffaa,
-        transparent: true,
-        opacity: 0.2,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide
-      })
-    );
-    beam.position.y = -0.88;
-    beam.rotation.x = Math.PI;
-    ship.add(beam);
-
-    const engine = new THREE.PointLight(0x00ffcc, 0.62, 16);
-    engine.position.y = -0.52;
-    ship.add(engine);
-
-    const cockpit = new THREE.PointLight(0xff66ff, 0.38, 9);
-    cockpit.position.y = 0.32;
-    ship.add(cockpit);
+    this._buildAllyShipTemplate();
+    const ship = this._allyShipTemplate.clone(true);
+    const rim = ship.getObjectByName('allyRim');
 
     const dur = this.allyShipDuration;
     ship.userData = {
@@ -1061,7 +1093,7 @@ class Game {
       orbitRadius: 4,
       orbitHeight: 3.5,
       orbitSpeed: 1.5,
-      rim
+      rim: rim || null
     };
 
     this.scene.add(ship);
@@ -1077,14 +1109,6 @@ class Game {
 
       if (now - data.spawnTime > data.duration) {
         this.scene.remove(ship);
-        ship.traverse(c => {
-          if (c.isMesh) {
-            c.geometry?.dispose();
-            if (c.material && !Array.isArray(c.material)) c.material.dispose();
-            else if (Array.isArray(c.material)) c.material.forEach(m => m.dispose?.());
-          }
-          if (c.isLight) c.dispose?.();
-        });
         this.allyShips.splice(i, 1);
         continue;
       }
@@ -1129,7 +1153,6 @@ class Game {
 
       if (proj.userData.life <= 0) {
         this.scene.remove(proj);
-        if (!proj.userData.sharedBoltMat) proj.material?.dispose();
         this.allyProjectiles.splice(i, 1);
         continue;
       }
@@ -1142,7 +1165,6 @@ class Game {
           this.damageDealt += proj.userData.damage;
           this.enemyManager.damageEnemy(enemy, proj.userData.damage);
           this.scene.remove(proj);
-          if (!proj.userData.sharedBoltMat) proj.material?.dispose();
           this.allyProjectiles.splice(i, 1);
           break;
         }
@@ -1168,9 +1190,6 @@ class Game {
   clearAllyShips() {
     for (const ship of this.allyShips) {
       this.scene.remove(ship);
-      ship.traverse(c => {
-        if (c.isMesh) { c.geometry?.dispose(); c.material?.dispose(); }
-      });
     }
     this.allyShips = [];
     for (const p of this.allyProjectiles) {
@@ -1202,7 +1221,7 @@ class Game {
       for (const enemy of this.enemyManager.enemies) {
         if (!enemy.userData.isDead && !enemy.userData._levelSlowed) {
           enemy.userData._levelSlowed = true;
-          enemy.userData.type = { ...enemy.userData.type, speed: enemy.userData.type.speed * fx.value };
+          enemy.userData.levelSpeedMul = fx.value;
         }
       }
     }
@@ -1211,7 +1230,7 @@ class Game {
       for (const enemy of this.enemyManager.enemies) {
         if (!enemy.userData.isDead && !enemy.userData._chaosBoosted) {
           enemy.userData._chaosBoosted = true;
-          enemy.userData.type = { ...enemy.userData.type, damage: Math.round(enemy.userData.type.damage * fx.enemyDmg) };
+          enemy.userData.chaosMeleeMul = fx.enemyDmg;
         }
       }
     }
@@ -1244,7 +1263,8 @@ class Game {
         const lastAttack = enemy.userData.lastAttackTime || 0;
         if (now - lastAttack > 800) {
           const type = enemy.userData.type;
-          const damage = type.diveDamage ?? type.jumpDamage ?? type.damage;
+          const base = type.diveDamage ?? type.jumpDamage ?? type.damage;
+          const damage = Math.round(base * (enemy.userData.chaosMeleeMul ?? 1));
           this.player.takeDamage(damage);
           enemy.userData.lastAttackTime = now;
           this.ui.updateHealth(this.player.health, this.player.maxHealth);
