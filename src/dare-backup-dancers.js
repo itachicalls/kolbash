@@ -34,7 +34,13 @@ function pickDanceClip(animations) {
 }
 
 export class DareBackupDancers {
-  constructor() {
+  /**
+   * @param {{ useWebGlRenderer?: boolean }} [opts] Pass `useWebGlRenderer: false` on mobile — a second
+   * WebGL context behind the dare UI reliably blows iOS WebKit memory limits (tab reload / “restart”).
+   */
+  constructor(opts = {}) {
+    /** When false, skip extra WebGL + FBX clones; CSS overlay only (see main Game.isMobile). */
+    this.useWebGlRenderer = opts.useWebGlRenderer !== false;
     this.loader = new FBXLoader();
     this.cache = new Map();
     this.scene = new THREE.Scene();
@@ -60,6 +66,8 @@ export class DareBackupDancers {
   }
 
   async preload(options = {}) {
+    if (!this.useWebGlRenderer) return;
+
     const serial = options.serial === true;
 
     const loadOne = async (def) => {
@@ -115,6 +123,15 @@ export class DareBackupDancers {
     if (!canvas) return;
 
     this.hide();
+
+    if (!this.useWebGlRenderer) {
+      canvas.style.display = 'none';
+      canvas.setAttribute('aria-hidden', 'true');
+      return;
+    }
+
+    canvas.style.display = '';
+    canvas.removeAttribute('aria-hidden');
 
     const loaded = DARE_DANCER_MODELS.filter(d => this.cache.has(d.path));
     if (loaded.length === 0) return;

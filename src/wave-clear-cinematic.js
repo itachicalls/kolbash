@@ -96,35 +96,47 @@ export class WaveClearCinematic {
     return this.preload();
   }
 
-  preload() {
-    return Promise.all(
-      WAVE_CLEAR_MODELS.map(
-        (path) =>
-          new Promise((resolve) => {
-            if (this.cache.has(path)) return resolve();
-            this.loader.load(
-              path,
-              (fbx) => {
-                fbx.updateMatrixWorld(true);
-                const animations = collectAnimations(fbx);
-                const box = new THREE.Box3().setFromObject(fbx);
-                const size = box.getSize(new THREE.Vector3());
-                this.cache.set(path, {
-                  fbx,
-                  animations,
-                  originalHeight: size.y || 1
-                });
-                resolve();
-              },
-              undefined,
-              () => {
-                console.warn('WaveClearCinematic: failed to load', path);
-                resolve();
-              }
-            );
-          })
-      )
-    );
+  /**
+   * @param {{ serial?: boolean }} [options] Use `serial: true` on mobile to avoid parallel FBX decode spikes.
+   */
+  preload(options = {}) {
+    if (this.isFullyLoaded()) return Promise.resolve();
+
+    const loadOne = (path) =>
+      new Promise((resolve) => {
+        if (this.cache.has(path)) return resolve();
+        this.loader.load(
+          path,
+          (fbx) => {
+            fbx.updateMatrixWorld(true);
+            const animations = collectAnimations(fbx);
+            const box = new THREE.Box3().setFromObject(fbx);
+            const size = box.getSize(new THREE.Vector3());
+            this.cache.set(path, {
+              fbx,
+              animations,
+              originalHeight: size.y || 1
+            });
+            resolve();
+          },
+          undefined,
+          () => {
+            console.warn('WaveClearCinematic: failed to load', path);
+            resolve();
+          }
+        );
+      });
+
+    if (options.serial === true) {
+      return (async () => {
+        for (const path of WAVE_CLEAR_MODELS) {
+          await loadOne(path);
+          await new Promise((r) => requestAnimationFrame(r));
+        }
+      })();
+    }
+
+    return Promise.all(WAVE_CLEAR_MODELS.map((path) => loadOne(path)));
   }
 
   /**

@@ -73,6 +73,8 @@ class Game {
     this.specialReady = false;
 
     this._waveCountdownRunning = false;
+    /** Blocks double resume from touch + synthetic click on dare / store close. */
+    this._overlayResumeBusy = false;
 
     /** Mobile-only: continuous fire without holding FIRE (persisted). */
     this.mobileAutoFire = false;
@@ -155,7 +157,7 @@ class Game {
       if (this.isMobile) {
         await this.deathScene.preload().catch(() => {});
         await new Promise((r) => requestAnimationFrame(r));
-        await this.dareDancers.preload({ serial: true }).catch(() => {});
+        await this.waveClear.preload({ serial: true }).catch(() => {});
         await new Promise((r) => requestAnimationFrame(r));
         await this.specialAttack.preload().catch(() => {});
       } else {
@@ -251,7 +253,7 @@ class Game {
     this.createLighting();
 
     this.deathScene = new DeathScene();
-    this.dareDancers = new DareBackupDancers();
+    this.dareDancers = new DareBackupDancers({ useWebGlRenderer: !this.isMobile });
     this.specialAttack = new SpecialAttackController(this.scene);
     this.gameMusic = new GameMusic();
     this.waveClear = new WaveClearCinematic(this.scene, this.camera);
@@ -450,11 +452,18 @@ class Game {
 
     window.addEventListener('resize', () => this.onWindowResize());
 
-    document.getElementById('start-screen').addEventListener('click', () => this.startGame());
-    document.getElementById('start-screen').addEventListener('touchend', (e) => {
-      e.preventDefault();
-      this.startGame();
-    });
+    const startScr = document.getElementById('start-screen');
+    if (startScr) {
+      startScr.addEventListener(
+        'pointerup',
+        (e) => {
+          if (e.button > 0) return;
+          e.preventDefault();
+          this.startGame();
+        },
+        { passive: false }
+      );
+    }
 
     const jumpBtn = document.getElementById('jump-btn');
     if (jumpBtn) {
@@ -649,45 +658,49 @@ class Game {
   }
 
   async runWaveCountdownThenStartWave() {
-    if (this._waveCountdownRunning) return;
-    this._waveCountdownRunning = true;
-    this.player.inputFrozen = true;
-    this.weapon.isHolding = false;
-
-    const tickMs = 700;
-    const goMs = 520;
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-    let wavePrimed = false;
     try {
-      this.ui.showWaveCountdown();
-      if (!this.isRunning || this.player.isDead) return;
+      if (this._waveCountdownRunning) return;
+      this._waveCountdownRunning = true;
+      this.player.inputFrozen = true;
+      this.weapon.isHolding = false;
 
-      this.waveManager.startNextWave(this.player.getPosition(), { deferAnnouncement: true });
-      wavePrimed = true;
-      this.ui.updateWave(this.waveManager.currentWave);
-      this.ui.updateLevelName(this.arena.getLevelName());
+      const tickMs = 700;
+      const goMs = 520;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-      for (const n of [3, 2, 1]) {
+      let wavePrimed = false;
+      try {
+        this.ui.showWaveCountdown();
         if (!this.isRunning || this.player.isDead) return;
-        this.ui.setWaveCountdownDigit(String(n), false);
-        this.waveManager.playCountdownTick(n);
-        await sleep(tickMs);
+
+        this.waveManager.startNextWave(this.player.getPosition(), { deferAnnouncement: true });
+        wavePrimed = true;
+        this.ui.updateWave(this.waveManager.currentWave);
+        this.ui.updateLevelName(this.arena.getLevelName());
+
+        for (const n of [3, 2, 1]) {
+          if (!this.isRunning || this.player.isDead) return;
+          this.ui.setWaveCountdownDigit(String(n), false);
+          this.waveManager.playCountdownTick(n);
+          await sleep(tickMs);
+        }
+        if (!this.isRunning || this.player.isDead) return;
+        this.ui.setWaveCountdownDigit('GO!', true);
+        this.waveManager.playCountdownGo();
+        await sleep(goMs);
+      } finally {
+        this.ui.hideWaveCountdown();
+        this._waveCountdownRunning = false;
+        if (wavePrimed) {
+          const ok = this.isRunning && !this.player.isDead;
+          this.waveManager.releaseDeferredWaveStart({ silent: !ok });
+        } else if (this.isRunning && !this.player.isDead) {
+          this.waveManager.startNextWave(this.player.getPosition());
+        }
+        this.player.inputFrozen = false;
       }
-      if (!this.isRunning || this.player.isDead) return;
-      this.ui.setWaveCountdownDigit('GO!', true);
-      this.waveManager.playCountdownGo();
-      await sleep(goMs);
     } finally {
-      this.ui.hideWaveCountdown();
-      this._waveCountdownRunning = false;
-      if (wavePrimed) {
-        const ok = this.isRunning && !this.player.isDead;
-        this.waveManager.releaseDeferredWaveStart({ silent: !ok });
-      } else if (this.isRunning && !this.player.isDead) {
-        this.waveManager.startNextWave(this.player.getPosition());
-      }
-      this.player.inputFrozen = false;
+      this._overlayResumeBusy = false;
     }
   }
 
@@ -709,7 +722,11 @@ class Game {
         this.showStore();
       }
     );
-    requestAnimationFrame(() => this.dareDancers.show());
+    if (this.dareDancers.useWebGlRenderer) {
+      requestAnimationFrame(() => this.dareDancers.show());
+    } else {
+      this.dareDancers.show();
+    }
   }
 
   showStore() {
@@ -751,6 +768,9 @@ class Game {
   }
 
   resumeNextWave() {
+    if (this._overlayResumeBusy) return;
+    this._overlayResumeBusy = true;
+
     this.dareDancers?.hide();
     this.ui.hideAllOverlays();
     this.isRunning = true;

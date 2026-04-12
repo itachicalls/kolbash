@@ -13,6 +13,19 @@ export const STORE_ITEMS = [
   { id: 'allyDur', name: 'ALLY UPGRADE', cost: 150, type: 'upgrade', desc: '+5s Ship Duration', repeatable: true }
 ];
 
+/** Single callback per tap — avoids iOS/WebKit firing touchend and a delayed click on the same gesture. */
+function bindPrimaryPointerUpOnce(el, onAction) {
+  if (!el || typeof onAction !== 'function') return;
+  const handler = (e) => {
+    if (e.button > 0) return;
+    try {
+      e.preventDefault();
+    } catch (err) {}
+    onAction(e);
+  };
+  el.addEventListener('pointerup', handler, { once: true, capture: true });
+}
+
 const DARE_MESSAGES = [
   "YOU SURVIVED. BARELY. DARE TO GO AGAIN?",
   "THE DISCO ISN'T DONE WITH YOU YET",
@@ -135,9 +148,7 @@ export class UIManager {
         const clone = btn.cloneNode(true);
         btn.replaceWith(clone);
         this.elements.victoryDone = document.getElementById('victory-done');
-        const done = () => onDone?.();
-        this.elements.victoryDone.addEventListener('click', done, { once: true });
-        this.elements.victoryDone.addEventListener('touchend', (e) => { e.preventDefault(); done(); }, { once: true });
+        bindPrimaryPointerUpOnce(this.elements.victoryDone, () => onDone?.());
       }
     }
   }
@@ -162,12 +173,7 @@ export class UIManager {
       const clone = btn.cloneNode(true);
       btn.replaceWith(clone);
       this.elements.gameRetryBtn = document.getElementById('game-retry-btn');
-      const go = (e) => {
-        e.preventDefault();
-        onRetry();
-      };
-      this.elements.gameRetryBtn.addEventListener('click', go, { once: true });
-      this.elements.gameRetryBtn.addEventListener('touchend', go, { once: true, passive: false });
+      bindPrimaryPointerUpOnce(this.elements.gameRetryBtn, () => onRetry());
     }
   }
 
@@ -346,12 +352,12 @@ export class UIManager {
     if (!b || b.dataset.bound) return;
     b.dataset.bound = '1';
     const onTap = (e) => {
+      if (e.button > 0) return;
       e.preventDefault();
       this._gameMusic?.toggle();
       this.syncMusicButton();
     };
-    b.addEventListener('click', onTap);
-    b.addEventListener('touchend', onTap, { passive: false });
+    b.addEventListener('pointerup', onTap, { passive: false });
     this.syncMusicButton();
   }
 
@@ -398,10 +404,16 @@ export class UIManager {
       this.elements.dareScreen.style.opacity = '';
       this.elements.dareScreen.style.transition = '';
     };
-    contBtn.addEventListener('click', () => { cleanup(); hideDare(); onContinue(); }, { once: true });
-    contBtn.addEventListener('touchend', (e) => { e.preventDefault(); cleanup(); hideDare(); onContinue(); }, { once: true });
-    storeBtn.addEventListener('click', () => { cleanup(); hideDare(); onStore(); }, { once: true });
-    storeBtn.addEventListener('touchend', (e) => { e.preventDefault(); cleanup(); hideDare(); onStore(); }, { once: true });
+    bindPrimaryPointerUpOnce(contBtn, () => {
+      cleanup();
+      hideDare();
+      onContinue();
+    });
+    bindPrimaryPointerUpOnce(storeBtn, () => {
+      cleanup();
+      hideDare();
+      onStore();
+    });
   }
 
   showStore(coins, unlockedWeapons, currentWeapon, callbacks) {
@@ -417,8 +429,7 @@ export class UIManager {
     };
     closeBtn.replaceWith(closeBtn.cloneNode(true));
     this.elements.storeClose = document.getElementById('store-close');
-    this.elements.storeClose.addEventListener('click', doClose, { once: true });
-    this.elements.storeClose.addEventListener('touchend', doClose, { once: true });
+    bindPrimaryPointerUpOnce(this.elements.storeClose, doClose);
   }
 
   _renderStoreItems(coins, unlockedWeapons, currentWeapon, callbacks) {
@@ -441,7 +452,7 @@ export class UIManager {
 
       card.innerHTML = `<div class="item-icon">${this._getItemIcon(item.id)}</div><div class="item-name">${item.name}</div><div class="item-desc">${item.desc}</div><div class="item-cost">${statusText}</div>`;
 
-      card.addEventListener('click', () => {
+      bindPrimaryPointerUpOnce(card, () => {
         if (owned && !equipped && item.type === 'weapon') {
           callbacks.onEquip(item.id);
           this._renderStoreItems(callbacks.getCoins(), callbacks.getUnlocked(), item.id, callbacks);
@@ -496,11 +507,11 @@ export class UIManager {
     if (orb && !orb.dataset.bound) {
       orb.dataset.bound = '1';
       const fire = (e) => {
+        if (e.button > 0) return;
         e.preventDefault();
         this.onSpecialActivate?.();
       };
-      orb.addEventListener('click', fire);
-      orb.addEventListener('touchend', fire, { passive: false });
+      orb.addEventListener('pointerup', fire, { passive: false });
     }
   }
 }
