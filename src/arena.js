@@ -88,10 +88,13 @@ export class Arena {
     this.asteroids = [];
     this.hazardCooldownUntil = 0;
 
+    /** True once every level index has a cached floor + wall row (fast swaps in setLevel). */
     this.levelAssetsPrebaked = false;
     this._floorTexturesByLevel = [];
     this._wallTexturesByLevel = [];
     this._hazardBuildRaf = null;
+    this._liteMobile = opts.liteMobileVisuals === true;
+    this._prebakeStaggerFrames = Math.max(1, Math.min(4, opts.staggerPrebakeFrames ?? 1));
 
     this.createFloor();
     this.createSpaceSky();
@@ -332,51 +335,100 @@ export class Arena {
     this.floorTexture.needsUpdate = true;
   }
 
-  /**
-   * Rasterize every arena floor + disco wall once at load. setLevel() then only swaps textures
-   * (no heavy canvas work on wave / level transitions).
-   */
-  async prebakeLevelTexturesAsync() {
-    if (this.levelAssetsPrebaked) return;
+  _isLevelPrebaked(L) {
+    const f = this._floorTexturesByLevel[L];
+    const w = this._wallTexturesByLevel[L];
+    return !!(f && w && w.length === 4);
+  }
+
+  _allLevelsPrebaked() {
+    for (let i = 0; i < LEVELS.length; i++) {
+      if (!this._isLevelPrebaked(i)) return false;
+    }
+    return true;
+  }
+
+  /** Synchronous bake for one level (used when entering a level before background prebake finished). */
+  _bakeLevelTexturesSync(L) {
+    if (L < 0 || L >= LEVELS.length || this._isLevelPrebaked(L)) return;
     const W = this.floorCanvas.width;
     const cw = this._wallDecalW;
     const ch = this._wallDecalH;
+    const level = LEVELS[L];
 
-    for (let L = 0; L < LEVELS.length; L++) {
-      await new Promise((r) => requestAnimationFrame(r));
-      const level = LEVELS[L];
-      const fc = document.createElement('canvas');
-      fc.width = W;
-      fc.height = W;
-      this.drawFloorToContext(fc.getContext('2d'), level, W);
-      const floorTex = new THREE.CanvasTexture(fc);
-      floorTex.wrapS = THREE.RepeatWrapping;
-      floorTex.wrapT = THREE.RepeatWrapping;
-      floorTex.repeat.copy(this.floorTexture.repeat);
-      floorTex.anisotropy = this.floorTexture.anisotropy;
-      if ('colorSpace' in floorTex && 'colorSpace' in this.floorTexture) {
-        floorTex.colorSpace = this.floorTexture.colorSpace;
-      }
-      this._floorTexturesByLevel[L] = floorTex;
+    const fc = document.createElement('canvas');
+    fc.width = W;
+    fc.height = W;
+    this.drawFloorToContext(fc.getContext('2d'), level, W);
+    const floorTex = new THREE.CanvasTexture(fc);
+    floorTex.wrapS = THREE.RepeatWrapping;
+    floorTex.wrapT = THREE.RepeatWrapping;
+    floorTex.repeat.copy(this.floorTexture.repeat);
+    floorTex.anisotropy = this.floorTexture.anisotropy;
+    if ('colorSpace' in floorTex && 'colorSpace' in this.floorTexture) {
+      floorTex.colorSpace = this.floorTexture.colorSpace;
+    }
+    this._floorTexturesByLevel[L] = floorTex;
 
-      const wallRow = [];
-      for (let wi = 0; wi < 4; wi++) {
-        const dc = document.createElement('canvas');
-        dc.width = cw;
-        dc.height = ch;
-        const dctx = dc.getContext('2d');
-        this.drawDiscoWallPanel(level, L, wi, dctx, cw, ch);
-        wallRow.push(new THREE.CanvasTexture(dc));
+    const wallRow = [];
+    for (let wi = 0; wi < 4; wi++) {
+      const dc = document.createElement('canvas');
+      dc.width = cw;
+      dc.height = ch;
+      const dctx = dc.getContext('2d');
+      this.drawDiscoWallPanel(level, L, wi, dctx, cw, ch);
+      wallRow.push(new THREE.CanvasTexture(dc));
+    }
+    this._wallTexturesByLevel[L] = wallRow;
+  }
+
+  /**
+   * Ensure level `levelIndex` has baked textures (mobile lazy path). Safe no-op when already baked.
+   */
+  ensureLevelTexturesReadySync(levelIndex) {
+    const L = ((levelIndex % LEVELS.length) + LEVELS.length) % LEVELS.length;
+    this._bakeLevelTexturesSync(L);
+    if (this._allLevelsPrebaked()) this.levelAssetsPrebaked = true;
+  }
+
+  /**
+   * Rasterize arena floors + disco walls. Desktop: all levels at load. Mobile: pass onlyLevels for a subset.
+   * @param {{ onlyLevels?: number[] }} [options]
+   */
+  async prebakeLevelTexturesAsync(options = {}) {
+    if (this.levelAssetsPrebaked) return;
+
+    const explicit = options.onlyLevels;
+    let levelsToBake;
+    if (explicit != null && explicit.length) {
+      levelsToBake = explicit.filter((L) => L >= 0 && L < LEVELS.length && !this._isLevelPrebaked(L));
+    } else {
+      levelsToBake = [];
+      for (let L = 0; L < LEVELS.length; L++) {
+        if (!this._isLevelPrebaked(L)) levelsToBake.push(L);
       }
-      this._wallTexturesByLevel[L] = wallRow;
     }
 
-    this.levelAssetsPrebaked = true;
+    if (levelsToBake.length === 0) {
+      if (this._allLevelsPrebaked()) this.levelAssetsPrebaked = true;
+      return;
+    }
+
+    for (const L of levelsToBake) {
+      for (let s = 0; s < this._prebakeStaggerFrames; s++) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      this._bakeLevelTexturesSync(L);
+    }
+
+    if (this._allLevelsPrebaked()) this.levelAssetsPrebaked = true;
     this.setLevel(this.currentLevel);
   }
 
   createSpaceSky() {
-    const S = 1024;
+    const lite = this._liteMobile === true;
+    const S = lite ? 512 : 1024;
+    const starCount = lite ? 220 : 500;
     const canvas = document.createElement('canvas');
     canvas.width = S;
     canvas.height = S;
@@ -409,7 +461,7 @@ export class Arena {
     });
 
     const starColors = ['#ffffff', '#fff8e0', '#e0f0ff', '#ffe8cc', '#d0e8ff', '#ffd0e0'];
-    for (let i = 0; i < 500; i++) {
+    for (let i = 0; i < starCount; i++) {
       const sx = (i * 1337 + 29) % S;
       const sy = (i * 2111 + 53) % S;
       const size = i < 20 ? (2.5 + (i % 3)) : (i < 80 ? (1.5 + (i % 2)) : (0.5 + (i % 2) * 0.5));
@@ -471,7 +523,9 @@ export class Arena {
     });
 
     const skyTexture = new THREE.CanvasTexture(canvas);
-    const skyGeo = new THREE.SphereGeometry(85, 24, 16);
+    const skySegX = lite ? 16 : 24;
+    const skySegY = lite ? 12 : 16;
+    const skyGeo = new THREE.SphereGeometry(85, skySegX, skySegY);
     const skyMat = new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide });
     this.skyMesh = new THREE.Mesh(skyGeo, skyMat);
     this.scene.add(this.skyMesh);
@@ -483,8 +537,12 @@ export class Arena {
       { pos: [-20, 50, -40], r: 6, color: 0x22ccaa, emissive: 0x0a4433 },
       { pos: [40, 30, 20], r: 2.5, color: 0xffcc44, emissive: 0x443300 }
     ];
+    const pSeg = lite ? 8 : 12;
+    const pRing = lite ? 6 : 8;
+    const torTube = lite ? 3 : 4;
+    const torRadial = lite ? 12 : 24;
     planet3D.forEach((p, i) => {
-      const geo = new THREE.SphereGeometry(p.r, 12, 8);
+      const geo = new THREE.SphereGeometry(p.r, pSeg, pRing);
       const mat = new THREE.MeshBasicMaterial({ color: p.color });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(p.pos[0], p.pos[1], p.pos[2]);
@@ -492,7 +550,7 @@ export class Arena {
       this.planets.push(mesh);
 
       if (i < 2) {
-        const ringGeo = new THREE.TorusGeometry(p.r * 1.6, 0.15, 4, 24);
+        const ringGeo = new THREE.TorusGeometry(p.r * 1.6, 0.15, torTube, torRadial);
         const ringMat = new THREE.MeshBasicMaterial({ color: p.color, transparent: true, opacity: 0.25, side: THREE.DoubleSide });
         const ring = new THREE.Mesh(ringGeo, ringMat);
         ring.rotation.x = Math.PI / 2.5;
@@ -625,7 +683,7 @@ export class Arena {
 
     this.scene.background = new THREE.Color(level.bg);
 
-    if (this.levelAssetsPrebaked && this._floorTexturesByLevel.length === LEVELS.length) {
+    if (this._isLevelPrebaked(this.currentLevel)) {
       this.floorMesh.material.map = this._floorTexturesByLevel[this.currentLevel];
       this.floorMesh.material.needsUpdate = true;
       const row = this._wallTexturesByLevel[this.currentLevel];
@@ -647,7 +705,7 @@ export class Arena {
 
     if (this.baseMesh) this.baseMesh.material.color.set(level.bg);
 
-    if (!this.levelAssetsPrebaked || this._floorTexturesByLevel.length !== LEVELS.length) {
+    if (!this._isLevelPrebaked(this.currentLevel)) {
       this.drawDiscoWalls(level);
     }
 

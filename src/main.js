@@ -88,19 +88,18 @@ class Game {
     const low = this.isLowTierMobile;
     const high = this.isHighEndMobile;
     return {
-      maxPixelRatio: m
-        ? Math.min(1.28, low ? 1 : high ? 1.18 : 1.08)
-        : Math.min(1.75, window.devicePixelRatio || 1),
-      powerPreference: m && low ? 'low-power' : 'high-performance',
-      floorTextureSize: m ? (low ? 640 : 896) : 1024,
-      wallDecalWidth: m ? (low ? 360 : 448) : 512,
-      wallDecalHeight: m ? (low ? 180 : 224) : 256,
-      floorAnisotropy: m ? (low ? 2 : 6) : 12,
-      maxPlayerProjectiles: m ? (low ? 14 : 22) : 34,
-      maxEnemyProjectiles: m ? (low ? 4 : 6) : 10,
-      maxEnemiesPerWave: m ? (low ? 9 : 12) : 16,
+      /** iOS WebKit: DPR>1 multiplies VRAM ~×4 per step — keep draw buffer tiny on phones. */
+      maxPixelRatio: m ? 1 : Math.min(1.75, window.devicePixelRatio || 1),
+      powerPreference: m ? (low ? 'low-power' : 'default') : 'high-performance',
+      floorTextureSize: m ? (low ? 448 : 512) : 1024,
+      wallDecalWidth: m ? (low ? 280 : 320) : 512,
+      wallDecalHeight: m ? (low ? 140 : 160) : 256,
+      floorAnisotropy: m ? 2 : 12,
+      maxPlayerProjectiles: m ? (low ? 10 : 12) : 34,
+      maxEnemyProjectiles: m ? (low ? 3 : 4) : 10,
+      maxEnemiesPerWave: m ? (low ? 8 : 9) : 16,
       cylinderSegments: m ? (low ? 5 : 6) : 8,
-      poolClonesPerModel: m ? 2 : 3,
+      poolClonesPerModel: m ? 1 : 3,
       maxShootersPerWave: m ? 2 : 3,
       maxCoinsAlive: m ? (low ? 40 : 65) : 110,
       allyBoltGeometryDetail: m ? 0 : 1,
@@ -147,20 +146,37 @@ class Game {
         this.enemyManager.prewarmSkinnedMaterials(this.renderer, this.camera);
       }
       this.ui.updateLoadingProgress('Baking arena visuals…');
-      await this.arena.prebakeLevelTexturesAsync();
+      if (this.isMobile) {
+        await this.arena.prebakeLevelTexturesAsync({ onlyLevels: [0, 1] });
+      } else {
+        await this.arena.prebakeLevelTexturesAsync();
+      }
       this.ui.updateLoadingProgress('Starting…');
-      Promise.all([
-        this.deathScene.preload().catch(() => {}),
-        this.dareDancers.preload().catch(() => {}),
-        this.specialAttack.preload().catch(() => {}),
-        !this.isMobile ? this.waveClear.preload().catch(() => {}) : Promise.resolve()
-      ]).catch(() => {});
+      if (this.isMobile) {
+        await this.deathScene.preload().catch(() => {});
+        await new Promise((r) => requestAnimationFrame(r));
+        await this.dareDancers.preload({ serial: true }).catch(() => {});
+        await new Promise((r) => requestAnimationFrame(r));
+        await this.specialAttack.preload().catch(() => {});
+      } else {
+        await Promise.all([
+          this.deathScene.preload().catch(() => {}),
+          this.dareDancers.preload().catch(() => {}),
+          this.specialAttack.preload().catch(() => {}),
+          this.waveClear.preload().catch(() => {})
+        ]).catch(() => {});
+      }
     } catch (e) {
       console.warn('Model loading issue:', e);
     }
 
     this.modelsReady = true;
     this.ui.showStartScreen();
+    if (this.isMobile) {
+      const rest = [];
+      for (let L = 2; L < LEVELS.length; L++) rest.push(L);
+      void this.arena.prebakeLevelTexturesAsync({ onlyLevels: rest }).catch(() => {});
+    }
     if (btn) {
       btn.textContent = this.isMobile ? 'TAP TO PLAY' : 'ENTER THE FLOOR';
       btn.style.opacity = '1';
@@ -192,7 +208,7 @@ class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPR));
     this.renderer.shadowMap.enabled = false;
     this.renderer.autoClear = true;
-    if (this.isLowTierMobile) {
+    if (this.isMobile) {
       this.renderer.toneMapping = THREE.NoToneMapping;
       this.renderer.toneMappingExposure = 1;
     } else {
@@ -273,7 +289,9 @@ class Game {
       floorTextureSize: this.perf.floorTextureSize,
       wallDecalWidth: this.perf.wallDecalWidth,
       wallDecalHeight: this.perf.wallDecalHeight,
-      floorAnisotropy: this.perf.floorAnisotropy
+      floorAnisotropy: this.perf.floorAnisotropy,
+      liteMobileVisuals: this.isMobile,
+      staggerPrebakeFrames: this.isMobile ? 2 : 1
     });
   }
 
@@ -303,6 +321,9 @@ class Game {
     };
 
     this.waveManager.onLevelChange = (levelIndex) => {
+      if (this.isMobile) {
+        this.arena.ensureLevelTexturesReadySync(levelIndex);
+      }
       const level = this.arena.setLevel(levelIndex);
       if (this.discoLight) this.discoLight.color.set(level.neon);
       this.applyLevelEffect(level);
@@ -429,17 +450,6 @@ class Game {
 
     window.addEventListener('resize', () => this.onWindowResize());
 
-    window.addEventListener(
-      'pageshow',
-      (e) => {
-        if (!e.persisted || !this.renderer) return;
-        const gl = this.renderer.getContext?.();
-        if (gl && typeof gl.isContextLost === 'function' && gl.isContextLost()) {
-          window.location.reload();
-        }
-      },
-      false
-    );
     document.getElementById('start-screen').addEventListener('click', () => this.startGame());
     document.getElementById('start-screen').addEventListener('touchend', (e) => {
       e.preventDefault();

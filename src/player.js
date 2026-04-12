@@ -37,7 +37,12 @@ export class Player {
     this.velocity = new THREE.Vector3();
     this.direction = new THREE.Vector3();
 
-    this.isMobile = ('ontouchstart' in window) && (window.innerWidth < 1200);
+    const touchCapable =
+      ('ontouchstart' in window) || (typeof navigator !== 'undefined' && (navigator.maxTouchPoints ?? 0) > 0);
+    const coarsePointer =
+      typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    const narrowViewport = typeof window !== 'undefined' && window.innerWidth < 1400;
+    this.isMobile = touchCapable && (coarsePointer || narrowViewport);
 
     if (this.isMobile) {
       this.cameraYaw = 0;

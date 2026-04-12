@@ -59,30 +59,39 @@ export class DareBackupDancers {
     this.scene.add(cyan);
   }
 
-  async preload() {
-    await Promise.all(
-      DARE_DANCER_MODELS.map(async (def) => {
-        if (this.cache.has(def.path)) return;
-        try {
-          const data = await new Promise((resolve, reject) => {
-            this.loader.load(def.path, resolve, undefined, reject);
-          });
-          let animations = data.animations || [];
-          data.traverse((ch) => {
-            if (ch.animations?.length) animations = animations.concat(ch.animations);
-          });
-          const box = new THREE.Box3().setFromObject(data);
-          const size = box.getSize(new THREE.Vector3());
-          this.cache.set(def.path, {
-            source: data,
-            originalHeight: size.y || 1,
-            animations
-          });
-        } catch (e) {
-          console.warn('DareBackupDancers: skip', def.path, e);
-        }
-      })
-    );
+  async preload(options = {}) {
+    const serial = options.serial === true;
+
+    const loadOne = async (def) => {
+      if (this.cache.has(def.path)) return;
+      try {
+        const data = await new Promise((resolve, reject) => {
+          this.loader.load(def.path, resolve, undefined, reject);
+        });
+        let animations = data.animations || [];
+        data.traverse((ch) => {
+          if (ch.animations?.length) animations = animations.concat(ch.animations);
+        });
+        const box = new THREE.Box3().setFromObject(data);
+        const size = box.getSize(new THREE.Vector3());
+        this.cache.set(def.path, {
+          source: data,
+          originalHeight: size.y || 1,
+          animations
+        });
+      } catch (e) {
+        console.warn('DareBackupDancers: skip', def.path, e);
+      }
+    };
+
+    if (serial) {
+      for (const def of DARE_DANCER_MODELS) {
+        await loadOne(def);
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+    } else {
+      await Promise.all(DARE_DANCER_MODELS.map((def) => loadOne(def)));
+    }
   }
 
   _resize() {
@@ -94,7 +103,9 @@ export class DareBackupDancers {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
-    const mobile = typeof window !== 'undefined' && 'ontouchstart' in window && window.innerWidth < 1200;
+    const touch = typeof window !== 'undefined' && ('ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0);
+    const coarse = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    const mobile = touch && (coarse || window.innerWidth < 1400);
     const pr = mobile ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
     this.renderer.setPixelRatio(pr);
   }
