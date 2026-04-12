@@ -95,17 +95,18 @@ class Game {
       /** iOS WebKit: DPR>1 multiplies VRAM ~×4 per step — keep draw buffer tiny on phones. */
       maxPixelRatio: m ? 1 : Math.min(1.75, window.devicePixelRatio || 1),
       powerPreference: m ? (low ? 'low-power' : 'default') : 'high-performance',
-      floorTextureSize: m ? (low ? 448 : 512) : 1024,
-      wallDecalWidth: m ? (low ? 280 : 320) : 512,
-      wallDecalHeight: m ? (low ? 140 : 160) : 256,
+      floorTextureSize: m ? (low ? 384 : 448) : 1024,
+      wallDecalWidth: m ? (low ? 256 : 288) : 512,
+      wallDecalHeight: m ? (low ? 128 : 144) : 256,
       floorAnisotropy: m ? 2 : 12,
-      maxPlayerProjectiles: m ? (low ? 10 : 12) : 34,
-      maxEnemyProjectiles: m ? (low ? 3 : 4) : 10,
-      maxEnemiesPerWave: m ? (low ? 8 : 9) : 16,
+      maxPlayerProjectiles: m ? (low ? 7 : 9) : 34,
+      maxEnemyProjectiles: m ? (low ? 2 : 3) : 10,
+      maxEnemiesPerWave: m ? (low ? 6 : 8) : 16,
       cylinderSegments: m ? (low ? 5 : 6) : 8,
       poolClonesPerModel: m ? 1 : 3,
       maxShootersPerWave: m ? 2 : 3,
-      maxCoinsAlive: m ? (low ? 40 : 65) : 110,
+      maxCoinsAlive: m ? (low ? 28 : 44) : 110,
+      maxPowerupsAlive: m ? (low ? 3 : 4) : 10,
       allyBoltGeometryDetail: m ? 0 : 1,
       frameDeltaCap: m ? 0.052 : 0.06
     };
@@ -176,11 +177,6 @@ class Game {
 
     this.modelsReady = true;
     this.ui.showStartScreen();
-    if (this.isMobile) {
-      const rest = [];
-      for (let L = 2; L < LEVELS.length; L++) rest.push(L);
-      void this.arena.prebakeLevelTexturesAsync({ onlyLevels: rest }).catch(() => {});
-    }
     if (btn) {
       btn.textContent = this.isMobile ? 'TAP TO PLAY' : 'ENTER THE FLOOR';
       btn.style.opacity = '1';
@@ -257,7 +253,8 @@ class Game {
     this.deathScene = new DeathScene();
     this.dareDancers = new DareBackupDancers({ useWebGlRenderer: !this.isMobile });
     this.specialAttack = new SpecialAttackController(this.scene, {
-      maxOrbs: this.isMobile ? 40 : 90
+      maxOrbs: this.isMobile ? 28 : 90,
+      lightMode: this.isMobile
     });
     this.gameMusic = new GameMusic();
     this.waveClear = new WaveClearCinematic(this.scene, this.camera);
@@ -309,7 +306,10 @@ class Game {
     });
     this.enemyManager.onEnemyDeath = (enemy) => this.onEnemyKilled(enemy);
 
-    this.itemManager = new ItemManager(this.scene, { maxCoinsAlive: this.perf.maxCoinsAlive });
+    this.itemManager = new ItemManager(this.scene, {
+      maxCoinsAlive: this.perf.maxCoinsAlive,
+      maxPowerupsAlive: this.perf.maxPowerupsAlive
+    });
 
     this.waveManager = new WaveManager(this.enemyManager, {
       maxEnemiesPerWave: this.perf.maxEnemiesPerWave,

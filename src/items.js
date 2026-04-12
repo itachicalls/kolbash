@@ -29,6 +29,7 @@ export class ItemManager {
     this.doubleCoinsEndTime = 0;
 
     this.maxCoinsAlive = opts.maxCoinsAlive ?? 110;
+    this.maxPowerupsAlive = opts.maxPowerupsAlive ?? 10;
     
     this.audioContext = null;
     this.initAudio();
@@ -137,6 +138,11 @@ export class ItemManager {
   spawnPowerup(position, typeIndex = -1) {
     if (typeIndex < 0) typeIndex = Math.floor(Math.random() * this.powerupTypes.length);
     const type = this.powerupTypes[typeIndex];
+
+    while (this.powerups.length >= this.maxPowerupsAlive) {
+      const old = this.powerups.shift();
+      if (old) this.scene.remove(old);
+    }
 
     const group = new THREE.Group();
     group.position.copy(position);

@@ -137,8 +137,14 @@
     #kills-display .value { color: #ff4444; }
     #damage-display .value { color: #44ff44; }
 
-    #level-display { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); }
-    #level-display .value { font-family: 'Orbitron', monospace; font-size: 0.7rem; color: #888; letter-spacing: 0.15em; }
+    #level-display {
+      position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+      max-width: min(92vw, 520px); padding: 0 10px; text-align: center; z-index: 2;
+    }
+    #level-display .value, #level-name {
+      font-family: 'Orbitron', monospace; font-size: 0.7rem; color: #888; letter-spacing: 0.15em;
+      display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
 
     #level-effect {
       position: absolute; top: 82px; left: 50%; transform: translateX(-50%);
@@ -281,7 +287,10 @@
     #coin-icon { width: 24px; height: 24px; background: linear-gradient(135deg, #ffd700, #ffaa00); border-radius: 50%; }
     #coin-count { font-family: 'Orbitron', monospace; font-size: 1.4rem; font-weight: 700; color: #ffd700; }
 
-    #powerups-container { position: absolute; top: 90px; right: 25px; display: flex; flex-direction: column; gap: 0.4rem; }
+    #powerups-container {
+      position: absolute; top: 90px; right: 25px; display: flex; flex-direction: column; gap: 0.4rem;
+      max-width: 42vw; z-index: 3;
+    }
     .powerup-indicator { display: none; align-items: center; gap: 0.6rem; background: rgba(0,0,0,0.8); padding: 0.4rem 0.8rem; border-radius: 3px; border-left: 3px solid; }
     .powerup-indicator.active { display: flex; }
     .powerup-indicator .icon { width: 20px; height: 20px; border-radius: 3px; }
@@ -700,20 +709,38 @@
       .controls-info { display: none; }
       .music-credit { font-size: 0.5rem; bottom: 0.35rem; padding: 0 0.5rem; }
 
-      #top-hud { gap: 0.3rem; flex-wrap: wrap; justify-content: center; max-width: 95vw; }
+      #top-hud { gap: 0.3rem; flex-wrap: wrap; justify-content: center; max-width: 96vw; top: 10px; }
       .hud-box { padding: 0.3rem 0.5rem; }
       .hud-box .value { font-size: 0.8rem; }
       .hud-box .label { font-size: 0.5rem; }
 
-      #level-display { top: 52px; }
-      #level-effect { top: 70px; font-size: 0.55rem; }
+      /* Fixed vertical stack: allow two wrapped stat rows (~80px) before level name */
+      #level-display {
+        top: 82px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: min(88vw, 360px);
+      }
+      #level-display .value, #level-name { font-size: 0.62rem; letter-spacing: 0.1em; }
+
+      #level-effect { top: 102px; left: 50%; transform: translateX(-50%); font-size: 0.52rem; max-width: 90vw; }
 
       #weapon-hud { bottom: 55px; font-size: 0.55rem; padding: 0.2rem 0.8rem; }
 
       #special-vortex-orb { bottom: 118px; width: 54px; height: 54px; }
       #special-vortex-orb .special-orb-core { width: 40px; height: 40px; }
       #music-toggle-btn { top: 46px; right: 8px; width: 38px; height: 38px; font-size: 1rem; }
-      #special-charge-wrap { top: 96px; right: 8px; width: 104px; }
+      /* Left side: clears center level text + right powerup column */
+      #special-charge-wrap {
+        top: 116px;
+        left: 10px;
+        right: auto;
+        width: min(118px, 36vw);
+        text-align: left;
+      }
+      #special-charge-wrap .special-label { text-align: left; }
+
+      #powerups-container { top: 116px; right: 8px; max-width: 46vw; }
 
       #health-container { bottom: 10px; left: 10px; }
       #health-bar-bg { width: 140px; height: 12px; }
@@ -769,8 +796,10 @@
       .hud-box { padding: 0.2rem 0.4rem; }
       .hud-box .value { font-size: 0.7rem; }
       .hud-box .label { font-size: 0.45rem; }
-      #level-display { top: 38px; }
-      #level-effect { top: 52px; }
+      #level-display { top: 56px; max-width: min(90vw, 300px); }
+      #level-effect { top: 74px; }
+      #powerups-container { top: 92px; }
+      #special-charge-wrap { top: 92px; }
       #weapon-hud { bottom: 50px; font-size: 0.5rem; }
       #health-container { bottom: 5px; left: 5px; }
       #health-bar-bg { width: 100px; height: 10px; }
@@ -801,6 +830,9 @@
       #top-hud { gap: 0.15rem; }
       .hud-box { padding: 0.2rem 0.3rem; }
       .hud-box .value { font-size: 0.65rem; }
+      #level-display { max-width: min(86vw, 300px); }
+      #powerups-container { max-width: 48vw; top: 100px; }
+      #special-charge-wrap { top: 100px; width: min(108px, 40vw); }
     }
 
     @supports (padding: env(safe-area-inset-bottom)) {

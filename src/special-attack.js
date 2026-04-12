@@ -81,7 +81,7 @@ function pickClip(animations) {
 export class SpecialAttackController {
   /**
    * @param {THREE.Scene} scene
-   * @param {{ maxOrbs?: number }} [opts] Lower maxOrbs on mobile to reduce GPU/RAM spikes during vortex.
+   * @param {{ maxOrbs?: number; lightMode?: boolean }} [opts] lightMode throttles burst work per frame (mobile).
    */
   constructor(scene, opts = {}) {
     this.scene = scene;
@@ -107,6 +107,10 @@ export class SpecialAttackController {
     this.orbPool = [];
     const cap = opts.maxOrbs ?? 90;
     this.maxOrbs = Math.max(16, Math.min(120, cap));
+    this._lightMode = opts.lightMode === true;
+    this._radialBurstCap = this._lightMode ? 4 : 14;
+    this._spawnBurstCap = this._lightMode ? 5 : 16;
+    this._orbSpawnMul = this._lightMode ? 0.5 : 1;
 
     this._forward = new THREE.Vector3();
     this._camPos = new THREE.Vector3();
@@ -301,14 +305,14 @@ export class SpecialAttackController {
     this.vortexAngle += delta * 7.5;
 
     this.radialTimer += delta;
-    let radialBursts = 14;
+    let radialBursts = this._radialBurstCap;
     while (this.radialTimer >= RADIAL_INTERVAL && radialBursts-- > 0) {
       this.radialTimer -= RADIAL_INTERVAL;
       this._radialBurst(px, py, pz);
     }
 
-    this.spawnAcc += delta * ORB_SPAWN_PER_SEC;
-    let spawnBurst = 16;
+    this.spawnAcc += delta * ORB_SPAWN_PER_SEC * this._orbSpawnMul;
+    let spawnBurst = this._spawnBurstCap;
     while (this.spawnAcc >= 1 && spawnBurst-- > 0) {
       this.spawnAcc -= 1;
       const ring = (this.emitRing++ % 5) * 0.14;
