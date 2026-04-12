@@ -95,6 +95,8 @@ export class Arena {
     this._hazardBuildRaf = null;
     this._liteMobile = opts.liteMobileVisuals === true;
     this._prebakeStaggerFrames = Math.max(1, Math.min(4, opts.staggerPrebakeFrames ?? 1));
+    /** When true, drop baked arena textures for levels not adjacent to the active one (mobile VRAM). */
+    this._evictRemoteTexturesOnMobile = opts.evictRemoteTexturesOnMobile === true;
 
     this.createFloor();
     this.createSpaceSky();
@@ -346,6 +348,43 @@ export class Arena {
       if (!this._isLevelPrebaked(i)) return false;
     }
     return true;
+  }
+
+  _disposeLevelBakedTextures(L) {
+    if (L < 0 || L >= LEVELS.length) return;
+    const ft = this._floorTexturesByLevel[L];
+    if (ft) {
+      ft.dispose();
+      delete this._floorTexturesByLevel[L];
+    }
+    const row = this._wallTexturesByLevel[L];
+    if (row && row.length) {
+      for (const t of row) {
+        t?.dispose?.();
+      }
+      delete this._wallTexturesByLevel[L];
+    }
+  }
+
+  /**
+   * Mobile: free GPU memory for arena levels that are not the active level or its neighbors (wrapping).
+   * Re-bakes on demand via ensureLevelTexturesReadySync when returning to an evicted level.
+   */
+  evictRemoteLevelTextures(anchorLevel) {
+    if (!this._evictRemoteTexturesOnMobile) return;
+    const n = LEVELS.length;
+    const L0 = ((anchorLevel % n) + n) % n;
+    const keep = new Set();
+    for (let d = -1; d <= 1; d++) {
+      let L = L0 + d;
+      L = ((L % n) + n) % n;
+      keep.add(L);
+    }
+    for (let L = 0; L < n; L++) {
+      if (keep.has(L)) continue;
+      this._disposeLevelBakedTextures(L);
+    }
+    this.levelAssetsPrebaked = this._allLevelsPrebaked();
   }
 
   /** Synchronous bake for one level (used when entering a level before background prebake finished). */

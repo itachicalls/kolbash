@@ -40,11 +40,6 @@ class Game {
     const hc = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined;
     this.isLowTierMobile =
       this.isMobile && (((dm != null && dm <= 4) || (hc != null && hc <= 4)));
-    /** Plenty of RAM + cores (e.g. recent iPhone) — still mobile, but avoid over-throttling. */
-    this.isHighEndMobile =
-      this.isMobile &&
-      !this.isLowTierMobile &&
-      ((dm != null && dm >= 6) || (hc != null && hc >= 5));
 
     this.perf = this._buildPerfProfile();
 
@@ -90,11 +85,11 @@ class Game {
   _buildPerfProfile() {
     const m = this.isMobile;
     const low = this.isLowTierMobile;
-    const high = this.isHighEndMobile;
     return {
       /** iOS WebKit: DPR>1 multiplies VRAM ~×4 per step — keep draw buffer tiny on phones. */
       maxPixelRatio: m ? 1 : Math.min(1.75, window.devicePixelRatio || 1),
-      powerPreference: m ? (low ? 'low-power' : 'default') : 'high-performance',
+      /** Prefer integrated/low-power GPU path on phones to reduce driver OOM / context loss. */
+      powerPreference: m ? 'low-power' : 'high-performance',
       floorTextureSize: m ? (low ? 384 : 448) : 1024,
       wallDecalWidth: m ? (low ? 256 : 288) : 512,
       wallDecalHeight: m ? (low ? 128 : 144) : 256,
@@ -200,6 +195,7 @@ class Game {
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
       powerPreference: this.perf.powerPreference,
+      precision: this.isMobile ? 'mediump' : 'highp',
       stencil: false,
       alpha: false,
       preserveDrawingBuffer: false
@@ -231,6 +227,10 @@ class Game {
           this.weapon.isHolding = false;
           this.weapon.mobileAutoFireActive = false;
         }
+        try {
+          this.specialAttack?.stop();
+          this.specialAttackActive = false;
+        } catch (err) {}
       },
       false
     );
@@ -294,7 +294,8 @@ class Game {
       wallDecalHeight: this.perf.wallDecalHeight,
       floorAnisotropy: this.perf.floorAnisotropy,
       liteMobileVisuals: this.isMobile,
-      staggerPrebakeFrames: this.isMobile ? 2 : 1
+      staggerPrebakeFrames: this.isMobile ? 2 : 1,
+      evictRemoteTexturesOnMobile: this.isMobile
     });
   }
 
@@ -331,6 +332,9 @@ class Game {
         this.arena.ensureLevelTexturesReadySync(levelIndex);
       }
       const level = this.arena.setLevel(levelIndex);
+      if (this.isMobile) {
+        this.arena.evictRemoteLevelTextures(levelIndex);
+      }
       if (this.discoLight) this.discoLight.color.set(level.neon);
       this.applyLevelEffect(level);
       this.triggerLevelFlash();
@@ -632,6 +636,9 @@ class Game {
     this.clearAllyShips();
 
     this.arena.setLevel(0);
+    if (this.isMobile) {
+      this.arena.evictRemoteLevelTextures(0);
+    }
     this.applyLevelEffect(LEVELS[0]);
     if (this.discoLight) this.discoLight.color.set(LEVELS[0].neon);
 
@@ -1369,6 +1376,7 @@ class Game {
   animateDeath() {
     if (!this.deathSequenceActive) return;
     requestAnimationFrame(() => this.animateDeath());
+    if (this.isMobile && typeof document !== 'undefined' && document.hidden) return;
     const delta = Math.min(this.deathScene.clock.getDelta(), 0.08);
     this.deathScene.update(this.renderer, delta);
   }
@@ -1376,8 +1384,11 @@ class Game {
   animate() {
     if (this._glContextLost) return;
 
+    const skipFrameHidden = this.isMobile && typeof document !== 'undefined' && document.hidden;
+
     if (this.isRunning && this.waveClear?.active) {
       requestAnimationFrame(() => this.animate());
+      if (skipFrameHidden) return;
       try {
         this._syncMobileAutofireFlag();
         const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
@@ -1396,6 +1407,8 @@ class Game {
     if (!this.isRunning) return;
 
     requestAnimationFrame(() => this.animate());
+
+    if (skipFrameHidden) return;
 
     try {
       this._syncMobileAutofireFlag();
