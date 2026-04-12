@@ -95,21 +95,37 @@ class Game {
       maxPixelRatio: m ? 1 : Math.min(1.75, window.devicePixelRatio || 1),
       /** Prefer integrated/low-power GPU path on phones to reduce driver OOM / context loss. */
       powerPreference: m ? 'low-power' : 'high-performance',
-      floorTextureSize: m ? (low ? 384 : 448) : 1024,
-      wallDecalWidth: m ? (low ? 256 : 288) : 512,
-      wallDecalHeight: m ? (low ? 128 : 144) : 256,
-      floorAnisotropy: m ? 2 : 12,
-      maxPlayerProjectiles: m ? (low ? 7 : 9) : 34,
-      maxEnemyProjectiles: m ? (low ? 2 : 3) : 10,
-      maxEnemiesPerWave: m ? (low ? 6 : 8) : 16,
-      cylinderSegments: m ? (low ? 5 : 6) : 8,
+      /** Small canvases = less GPU RAM; sync bakes stay under jank budgets. */
+      floorTextureSize: m ? (low ? 256 : 288) : 1024,
+      wallDecalWidth: m ? (low ? 224 : 256) : 512,
+      wallDecalHeight: m ? (low ? 112 : 128) : 256,
+      floorAnisotropy: m ? 1 : 12,
+      maxPlayerProjectiles: m ? (low ? 4 : 5) : 34,
+      maxEnemyProjectiles: m ? 2 : 10,
+      maxEnemiesPerWave: m ? (low ? 4 : 5) : 16,
+      cylinderSegments: m ? (low ? 4 : 5) : 8,
       poolClonesPerModel: m ? 1 : 3,
-      maxShootersPerWave: m ? 2 : 3,
-      maxCoinsAlive: m ? (low ? 28 : 44) : 110,
-      maxPowerupsAlive: m ? (low ? 3 : 4) : 10,
+      maxShootersPerWave: m ? 1 : 3,
+      maxCoinsAlive: m ? (low ? 14 : 18) : 110,
+      maxPowerupsAlive: m ? 2 : 10,
       allyBoltGeometryDetail: m ? 0 : 1,
-      frameDeltaCap: m ? 0.052 : 0.06
+      frameDeltaCap: m ? 0.048 : 0.06,
+      /** Fewer GPU particles for disco special (mobile). */
+      specialMaxOrbs: m ? (low ? 8 : 12) : 90
     };
+  }
+
+  _showFatalError(message) {
+    const wrap = document.getElementById('fatal-error');
+    const msg = document.getElementById('fatal-error-msg');
+    if (msg) msg.textContent = String(message || 'Unknown error');
+    if (wrap) wrap.style.display = 'block';
+    try {
+      document.getElementById('loading-screen')?.style.setProperty('display', 'none');
+    } catch (e) {}
+    try {
+      document.getElementById('start-screen')?.style.setProperty('display', 'none');
+    } catch (e) {}
   }
 
   async init() {
@@ -119,7 +135,14 @@ class Game {
 
     await new Promise(r => requestAnimationFrame(r));
 
-    this.createScene();
+    try {
+      this.createScene();
+    } catch (err) {
+      console.error(err);
+      this._showFatalError(err?.message || err);
+      return;
+    }
+    try {
     this.gameMusic.setStateChangeHandler(() => this.ui.syncMusicButton?.());
     this.ui.bindMusic(this.gameMusic);
     this.ui.updateLoadingProgress('Physics & arena…');
@@ -155,7 +178,8 @@ class Game {
       }
       this.ui.updateLoadingProgress('Baking arena visuals…');
       if (this.isMobile) {
-        await this.arena.prebakeLevelTexturesAsync({ onlyLevels: [0, 1] });
+        await this.arena.prebakeLevelTexturesAsync({ onlyLevels: [0] });
+        this.arena.prebakeLevelTexturesAsync().catch(() => {});
       } else {
         await this.arena.prebakeLevelTexturesAsync();
       }
@@ -189,6 +213,10 @@ class Game {
     if (this.isMobile) {
       document.getElementById('mobile-controls')?.style.setProperty('display', 'block');
     }
+    } catch (bootErr) {
+      console.error(bootErr);
+      this._showFatalError(bootErr?.message || bootErr);
+    }
   }
 
   createScene() {
@@ -206,10 +234,15 @@ class Game {
       precision: this.isMobile ? 'mediump' : 'highp',
       stencil: false,
       alpha: false,
-      preserveDrawingBuffer: false
+      preserveDrawingBuffer: false,
+      failIfMajorPerformanceCaveat: false
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPR));
+    const gl = this.renderer.getContext();
+    if (!gl) {
+      throw new Error('WebGL is not available (blocked GPU or unsupported browser).');
+    }
     this.renderer.shadowMap.enabled = false;
     this.renderer.autoClear = true;
     if (this.isMobile) {
@@ -262,7 +295,7 @@ class Game {
     this.deathScene = new DeathScene();
     this.dareDancers = new DareBackupDancers({ useWebGlRenderer: !this.isMobile });
     this.specialAttack = new SpecialAttackController(this.scene, {
-      maxOrbs: this.isMobile ? 28 : 90,
+      maxOrbs: this.perf.specialMaxOrbs ?? (this.isMobile ? 12 : 90),
       lightMode: this.isMobile
     });
     this.gameMusic = new GameMusic();
@@ -423,8 +456,12 @@ class Game {
       wallDecalHeight: this.perf.wallDecalHeight,
       floorAnisotropy: this.perf.floorAnisotropy,
       liteMobileVisuals: this.isMobile,
-      staggerPrebakeFrames: this.isMobile ? 2 : 1,
-      evictRemoteTexturesOnMobile: this.isMobile
+      ultraLiteSky: this.isMobile,
+      staggerPrebakeFrames: this.isMobile ? 3 : 1,
+      /** Eviction + sync rebake spikes VRAM churn on some drivers — keep all baked levels resident on phone. */
+      evictRemoteTexturesOnMobile: false,
+      /** Hazards = dozens of extra meshes + materials per floor; skip on mobile. */
+      disableHazardMeshes: this.isMobile
     });
   }
 
@@ -432,7 +469,7 @@ class Game {
     this.enemyManager = new EnemyManager(this.scene, this.physicsWorld, {
       maxEnemyProjectiles: this.perf.maxEnemyProjectiles,
       maxShootersPerWave: this.perf.maxShootersPerWave,
-      poolReplenishTo: Math.max(2, this.perf.poolClonesPerModel + 1)
+      poolReplenishTo: this.isMobile ? 2 : Math.max(2, this.perf.poolClonesPerModel + 1)
     });
     this.enemyManager.onEnemyDeath = (enemy) => this.onEnemyKilled(enemy);
 
@@ -1515,7 +1552,18 @@ class Game {
   }
 }
 
+function showFatalFromMain(err) {
+  const wrap = document.getElementById('fatal-error');
+  const msg = document.getElementById('fatal-error-msg');
+  if (msg) msg.textContent = String(err?.message || err || 'Unknown error');
+  if (wrap) wrap.style.display = 'block';
+  document.getElementById('loading-screen')?.style.setProperty('display', 'none');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const game = new Game();
-  game.init().catch(err => console.error(err));
+  game.init().catch((err) => {
+    console.error(err);
+    showFatalFromMain(err);
+  });
 });

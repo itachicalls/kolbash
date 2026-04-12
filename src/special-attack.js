@@ -105,9 +105,10 @@ export class SpecialAttackController {
 
     this.orbs = [];
     this.orbPool = [];
-    const cap = opts.maxOrbs ?? 90;
-    this.maxOrbs = Math.max(16, Math.min(120, cap));
     this._lightMode = opts.lightMode === true;
+    const cap = opts.maxOrbs ?? 90;
+    const minOrbs = this._lightMode ? 6 : 16;
+    this.maxOrbs = Math.max(minOrbs, Math.min(120, cap));
     this._radialBurstCap = this._lightMode ? 4 : 14;
     this._spawnBurstCap = this._lightMode ? 5 : 16;
     this._orbSpawnMul = this._lightMode ? 0.5 : 1;

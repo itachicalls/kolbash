@@ -94,9 +94,13 @@ export class Arena {
     this._wallTexturesByLevel = [];
     this._hazardBuildRaf = null;
     this._liteMobile = opts.liteMobileVisuals === true;
+    /** Even smaller sky canvas + fewer stars / planet detail (phones). */
+    this._ultraLiteSky = opts.ultraLiteSky === true;
     this._prebakeStaggerFrames = Math.max(1, Math.min(4, opts.staggerPrebakeFrames ?? 1));
     /** When true, drop baked arena textures for levels not adjacent to the active one (mobile VRAM). */
     this._evictRemoteTexturesOnMobile = opts.evictRemoteTexturesOnMobile === true;
+    /** Skip spikes/asteroids (many meshes + shared mat dispose risk on level swap). */
+    this._disableHazardMeshes = opts.disableHazardMeshes === true;
 
     this.createFloor();
     this.createSpaceSky();
@@ -159,6 +163,10 @@ export class Arena {
 
   /** Spikes + asteroids only; call after clearHazards (used deferred on level change to avoid frame spikes). */
   fillHazardMeshes(levelIndex) {
+    if (this._disableHazardMeshes) {
+      this.spikeZones = [];
+      return;
+    }
     if (levelIndex < 2) return;
 
     const level = LEVELS[levelIndex];
@@ -471,8 +479,9 @@ export class Arena {
 
   createSpaceSky() {
     const lite = this._liteMobile === true;
-    const S = lite ? 512 : 1024;
-    const starCount = lite ? 220 : 500;
+    const ultra = this._ultraLiteSky === true;
+    const S = lite ? (ultra ? 384 : 512) : 1024;
+    const starCount = lite ? (ultra ? 120 : 220) : 500;
     const canvas = document.createElement('canvas');
     canvas.width = S;
     canvas.height = S;
@@ -492,8 +501,9 @@ export class Arena {
       { x: 500, y: 750, rx: 250, ry: 100, color: 'rgba(180,0,80,0.05)' },
       { x: 150, y: 800, rx: 200, ry: 140, color: 'rgba(0,120,100,0.04)' }
     ];
+    const nebulaLayers = ultra ? 3 : 5;
     nebulae.forEach(n => {
-      for (let layer = 0; layer < 5; layer++) {
+      for (let layer = 0; layer < nebulaLayers; layer++) {
         const ng = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.rx + layer * 20);
         ng.addColorStop(0, n.color);
         ng.addColorStop(1, 'transparent');
@@ -567,8 +577,8 @@ export class Arena {
     });
 
     const skyTexture = new THREE.CanvasTexture(canvas);
-    const skySegX = lite ? 16 : 24;
-    const skySegY = lite ? 12 : 16;
+    const skySegX = lite ? (ultra ? 12 : 16) : 24;
+    const skySegY = lite ? (ultra ? 10 : 12) : 16;
     const skyGeo = new THREE.SphereGeometry(85, skySegX, skySegY);
     const skyMat = new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide });
     this.skyMesh = new THREE.Mesh(skyGeo, skyMat);
@@ -581,10 +591,10 @@ export class Arena {
       { pos: [-20, 50, -40], r: 6, color: 0x22ccaa, emissive: 0x0a4433 },
       { pos: [40, 30, 20], r: 2.5, color: 0xffcc44, emissive: 0x443300 }
     ];
-    const pSeg = lite ? 8 : 12;
-    const pRing = lite ? 6 : 8;
-    const torTube = lite ? 3 : 4;
-    const torRadial = lite ? 12 : 24;
+    const pSeg = lite ? (ultra ? 6 : 8) : 12;
+    const pRing = lite ? (ultra ? 4 : 6) : 8;
+    const torTube = lite ? (ultra ? 2 : 3) : 4;
+    const torRadial = lite ? (ultra ? 8 : 12) : 24;
     planet3D.forEach((p, i) => {
       const geo = new THREE.SphereGeometry(p.r, pSeg, pRing);
       const mat = new THREE.MeshBasicMaterial({ color: p.color });
@@ -593,7 +603,7 @@ export class Arena {
       this.scene.add(mesh);
       this.planets.push(mesh);
 
-      if (i < 2) {
+      if (i < 2 && !ultra) {
         const ringGeo = new THREE.TorusGeometry(p.r * 1.6, 0.15, torTube, torRadial);
         const ringMat = new THREE.MeshBasicMaterial({ color: p.color, transparent: true, opacity: 0.25, side: THREE.DoubleSide });
         const ring = new THREE.Mesh(ringGeo, ringMat);

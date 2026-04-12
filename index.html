@@ -27,6 +27,23 @@
     #game-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
     canvas { display: block; width: 100% !important; height: 100% !important; }
 
+    #fatal-error {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 200000;
+      background: #0d0614;
+      color: #e8a0a0;
+      padding: max(16px, env(safe-area-inset-top)) 20px 24px;
+      font-family: system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.45;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    #fatal-error h1 { color: #fff; font-size: 1.25rem; margin-bottom: 12px; }
+    #fatal-error-msg { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 13px; color: #ffb0b0; }
+
     /* ===== START SCREEN ===== */
     #start-screen {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -843,6 +860,12 @@
   </style>
 </head>
 <body>
+  <div id="fatal-error" aria-live="assertive">
+    <h1>Could not start the game</h1>
+    <p id="fatal-error-msg"></p>
+    <p style="margin-top:20px;opacity:0.75;font-size:13px;">Try updating Chrome, closing other tabs, or reopen with <code>?debug=1</code> and copy the log.</p>
+  </div>
+
   <div id="loading-screen" style="display: flex;">
     <div class="spinner"></div>
     <div class="loading-text">KOL BASH</div>
