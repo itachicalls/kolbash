@@ -18,6 +18,7 @@ import { SpecialAttackController, SPECIAL_CHARGE_KILLS } from './special-attack.
 import { GameMusic } from './game-music.js';
 import { WaveClearCinematic } from './wave-clear-cinematic.js';
 import { resumeSharedAudioContext } from './shared-audio.js';
+import { attachMobileDebug } from './mobile-debug.js';
 
 class Game {
   constructor() {
@@ -80,6 +81,8 @@ class Game {
     this._glContextLost = false;
     /** Throttles rapid special taps while not charged (avoids iOS jank / audio spikes). */
     this._lastSpecialRejectMs = 0;
+    /** @type {ReturnType<typeof attachMobileDebug>} */
+    this._mobileDbg = null;
   }
 
   _buildPerfProfile() {
@@ -124,6 +127,9 @@ class Game {
     this.createArena();
     this.createManagers();
     this.setupEventListeners();
+
+    this._mobileDbg = attachMobileDebug({ getGame: () => this });
+    this._mobileDbg?.mark('INIT', 'createManagers done');
 
     this.ui.onSpecialActivate = () => this.trySpecialAttack();
 
@@ -223,6 +229,7 @@ class Game {
         this._glContextLost = true;
         this.isRunning = false;
         this.clock.stop();
+        this._mobileDbg?.mark('WEBGL_CONTEXT_LOST', 'stopping loop');
         if (this.weapon) {
           this.weapon.isHolding = false;
           this.weapon.mobileAutoFireActive = false;
@@ -335,6 +342,7 @@ class Game {
       if (this.isMobile) {
         this.arena.evictRemoteLevelTextures(levelIndex);
       }
+      this._mobileDbg?.mark('LEVEL_CHANGE', String(levelIndex));
       if (this.discoLight) this.discoLight.color.set(level.neon);
       this.applyLevelEffect(level);
       this.triggerLevelFlash();
@@ -716,6 +724,7 @@ class Game {
   }
 
   showDareScreen(wave) {
+    this._mobileDbg?.mark('DARE_SCREEN', `wave=${wave}`);
     this.isRunning = false;
     this.player.inputFrozen = false;
 
@@ -779,6 +788,7 @@ class Game {
   }
 
   resumeNextWave() {
+    this._mobileDbg?.mark('RESUME_NEXT_WAVE', '');
     if (this._overlayResumeBusy) return;
     this._overlayResumeBusy = true;
 
@@ -1289,6 +1299,7 @@ class Game {
       return;
     }
     this._lastSpecialRejectMs = 0;
+    this._mobileDbg?.mark('SPECIAL_START', '');
 
     this.specialReady = false;
     this.specialCharge = 0;
@@ -1310,6 +1321,7 @@ class Game {
       },
       onEnd: () => {
         this.specialAttackActive = false;
+        this._mobileDbg?.mark('SPECIAL_END', '');
         this.player.inputFrozen = false;
         this.screenShake = Math.min(this.screenShake + 0.4, 1.1);
         if (this.isRunning && !this.player.isDead) {
@@ -1326,6 +1338,7 @@ class Game {
 
   beginDeathSequence() {
     if (this.deathSequenceActive) return;
+    this._mobileDbg?.mark('DEATH_SEQUENCE', '');
     if (this.specialAttackActive) {
       this.specialAttack.stop();
       this.specialAttackActive = false;
@@ -1392,6 +1405,7 @@ class Game {
       try {
         this._syncMobileAutofireFlag();
         const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
+        this._mobileDbg?.tickFrame(delta * 1000);
         const playerPos = this.player.getPosition();
         this.physicsWorld.update(delta);
         this.player.update(delta);
@@ -1399,6 +1413,7 @@ class Game {
         this.waveClear.update(delta);
         this.renderer.render(this.scene, this.camera);
       } catch (err) {
+        this._mobileDbg?.mark('FRAME_ERR_WAVECLEAR', String(err?.message || err));
         console.warn('[KOL BASH] frame (wave clear)', err);
       }
       return;
@@ -1413,6 +1428,7 @@ class Game {
     try {
       this._syncMobileAutofireFlag();
       const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
+      this._mobileDbg?.tickFrame(delta * 1000);
       const playerPos = this.player.getPosition();
 
       this.physicsWorld.update(delta);
@@ -1470,6 +1486,7 @@ class Game {
 
       this.renderer.render(this.scene, this.camera);
     } catch (err) {
+      this._mobileDbg?.mark('FRAME_ERR_MAIN', String(err?.message || err));
       console.warn('[KOL BASH] frame', err);
     }
   }
