@@ -69,9 +69,13 @@ export const LEVELS = [
 ];
 
 export class Arena {
-  constructor(scene, physicsWorld) {
+  constructor(scene, physicsWorld, opts = {}) {
     this.scene = scene;
     this.physicsWorld = physicsWorld;
+    this._floorTexSize = opts.floorTextureSize ?? 1024;
+    this._wallDecalW = opts.wallDecalWidth ?? 512;
+    this._wallDecalH = opts.wallDecalHeight ?? 256;
+    this._floorAniso = opts.floorAnisotropy ?? 12;
     this.currentLevel = 0;
     this.wallDecals = [];
     this.wallMeshes = [];
@@ -84,6 +88,11 @@ export class Arena {
     this.asteroids = [];
     this.hazardCooldownUntil = 0;
 
+    this.levelAssetsPrebaked = false;
+    this._floorTexturesByLevel = [];
+    this._wallTexturesByLevel = [];
+    this._hazardBuildRaf = null;
+
     this.createFloor();
     this.createSpaceSky();
     this.createWalls();
@@ -91,7 +100,7 @@ export class Arena {
   }
 
   createFloor() {
-    const W = 1024;
+    const W = this._floorTexSize;
     const canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = W;
@@ -102,7 +111,7 @@ export class Arena {
     this.floorTexture.wrapS = THREE.RepeatWrapping;
     this.floorTexture.wrapT = THREE.RepeatWrapping;
     this.floorTexture.repeat.set(2.5, 2.5);
-    this.floorTexture.anisotropy = 12;
+    this.floorTexture.anisotropy = this._floorAniso;
 
     const floorGeo = new THREE.PlaneGeometry(50, 50);
     this.floorMat = new THREE.MeshStandardMaterial({
@@ -138,8 +147,8 @@ export class Arena {
     this.asteroids = [];
   }
 
-  buildHazards(levelIndex) {
-    this.clearHazards();
+  /** Spikes + asteroids only; call after clearHazards (used deferred on level change to avoid frame spikes). */
+  fillHazardMeshes(levelIndex) {
     if (levelIndex < 2) return;
 
     const level = LEVELS[levelIndex];
@@ -207,6 +216,25 @@ export class Arena {
     }
   }
 
+  scheduleHazardMeshes(levelIndex) {
+    if (this._hazardBuildRaf != null) {
+      cancelAnimationFrame(this._hazardBuildRaf);
+      this._hazardBuildRaf = null;
+    }
+    const captured = levelIndex;
+    this._hazardBuildRaf = requestAnimationFrame(() => {
+      this._hazardBuildRaf = null;
+      if (this.currentLevel !== captured) return;
+      this.fillHazardMeshes(captured);
+    });
+  }
+
+  buildHazards(levelIndex) {
+    this.clearHazards();
+    if (levelIndex < 2) return;
+    this.fillHazardMeshes(levelIndex);
+  }
+
   updateHazards(deltaTime) {
     const t = performance.now() * 0.001;
     for (const a of this.asteroids) {
@@ -245,14 +273,13 @@ export class Arena {
     return 0;
   }
 
-  drawFloor(level) {
-    const ctx = this.floorCtx;
+  drawFloorToContext(ctx, level, sizePx) {
     const tiles = 16;
-    const ts = this.floorCanvas.width / tiles;
+    const ts = sizePx / tiles;
     const colors = level.tiles;
 
     ctx.fillStyle = '#030208';
-    ctx.fillRect(0, 0, this.floorCanvas.width, this.floorCanvas.height);
+    ctx.fillRect(0, 0, sizePx, sizePx);
 
     for (let x = 0; x < tiles; x++) {
       for (let y = 0; y < tiles; y++) {
@@ -290,16 +317,62 @@ export class Arena {
       }
     }
 
-    const cx = this.floorCanvas.width / 2;
-    const cy = this.floorCanvas.height / 2;
+    const cx = sizePx / 2;
+    const cy = sizePx / 2;
     const ring = ctx.createRadialGradient(cx, cy, ts * 0.5, cx, cy, cx * 0.95);
     ring.addColorStop(0, 'rgba(255,255,255,0)');
     ring.addColorStop(0.72, 'rgba(0,0,0,0)');
     ring.addColorStop(1, 'rgba(0,0,0,0.45)');
     ctx.fillStyle = ring;
-    ctx.fillRect(0, 0, this.floorCanvas.width, this.floorCanvas.height);
+    ctx.fillRect(0, 0, sizePx, sizePx);
+  }
 
+  drawFloor(level) {
+    this.drawFloorToContext(this.floorCtx, level, this.floorCanvas.width);
     this.floorTexture.needsUpdate = true;
+  }
+
+  /**
+   * Rasterize every arena floor + disco wall once at load. setLevel() then only swaps textures
+   * (no heavy canvas work on wave / level transitions).
+   */
+  async prebakeLevelTexturesAsync() {
+    if (this.levelAssetsPrebaked) return;
+    const W = this.floorCanvas.width;
+    const cw = this._wallDecalW;
+    const ch = this._wallDecalH;
+
+    for (let L = 0; L < LEVELS.length; L++) {
+      await new Promise((r) => requestAnimationFrame(r));
+      const level = LEVELS[L];
+      const fc = document.createElement('canvas');
+      fc.width = W;
+      fc.height = W;
+      this.drawFloorToContext(fc.getContext('2d'), level, W);
+      const floorTex = new THREE.CanvasTexture(fc);
+      floorTex.wrapS = THREE.RepeatWrapping;
+      floorTex.wrapT = THREE.RepeatWrapping;
+      floorTex.repeat.copy(this.floorTexture.repeat);
+      floorTex.anisotropy = this.floorTexture.anisotropy;
+      if ('colorSpace' in floorTex && 'colorSpace' in this.floorTexture) {
+        floorTex.colorSpace = this.floorTexture.colorSpace;
+      }
+      this._floorTexturesByLevel[L] = floorTex;
+
+      const wallRow = [];
+      for (let wi = 0; wi < 4; wi++) {
+        const dc = document.createElement('canvas');
+        dc.width = cw;
+        dc.height = ch;
+        const dctx = dc.getContext('2d');
+        this.drawDiscoWallPanel(level, L, wi, dctx, cw, ch);
+        wallRow.push(new THREE.CanvasTexture(dc));
+      }
+      this._wallTexturesByLevel[L] = wallRow;
+    }
+
+    this.levelAssetsPrebaked = true;
+    this.setLevel(this.currentLevel);
   }
 
   createSpaceSky() {
@@ -456,8 +529,8 @@ export class Arena {
       }
 
       const decalCanvas = document.createElement('canvas');
-      decalCanvas.width = 512;
-      decalCanvas.height = 256;
+      decalCanvas.width = this._wallDecalW;
+      decalCanvas.height = this._wallDecalH;
       const decalCtx = decalCanvas.getContext('2d');
       const decalTex = new THREE.CanvasTexture(decalCanvas);
 
@@ -475,7 +548,7 @@ export class Arena {
       mantraPlane.rotation.y = w.mantraRot ?? w.rot;
       this.scene.add(mantraPlane);
 
-      this.wallDecals.push({ texture: decalTex, ctx: decalCtx, canvas: decalCanvas });
+      this.wallDecals.push({ texture: decalTex, ctx: decalCtx, canvas: decalCanvas, plane: mantraPlane });
 
       const neon = new THREE.Mesh(
         new THREE.BoxGeometry(size * 2, 0.12, 0.12),
@@ -488,61 +561,60 @@ export class Arena {
     });
   }
 
-  drawDiscoWalls(level) {
+  drawDiscoWallPanel(level, levelIndex, wallIdx, ctx, w, h) {
     const colors = level.sparkles;
     const accents = level.mantraColors;
+    const seed = (wallIdx + 1) * 1337 + (levelIndex + 1) * 911;
 
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(6, 0, 14, 0.94)';
+    ctx.fillRect(0, 0, w, h);
+
+    const stripes = 18;
+    for (let s = 0; s < stripes; s++) {
+      const x = (s / stripes) * w;
+      const bw = w / stripes + 1.5;
+      const c1 = colors[(s + wallIdx) % colors.length];
+      const c2 = colors[(s + 2 + wallIdx) % colors.length];
+      const g = ctx.createLinearGradient(x, 0, x + bw * 0.6, h);
+      g.addColorStop(0, c1 + '66');
+      g.addColorStop(0.45, c2 + '33');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, 0, bw, h);
+    }
+
+    ctx.globalAlpha = 0.07;
+    for (let y = 0; y < h; y += 5) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, y, w, 1);
+    }
+    ctx.globalAlpha = 1;
+
+    const spotCount = 14;
+    for (let i = 0; i < spotCount; i++) {
+      const sx = ((seed * (i + 3)) % 1000) / 1000 * (w - 48) + 24;
+      const sy = ((seed * (i + 7) + i * 19) % 1000) / 1000 * (h - 48) + 24;
+      const rad = 14 + ((seed + i * 37) % 36);
+      const ac = accents[i % accents.length];
+      const rg = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad);
+      rg.addColorStop(0, ac + 'dd');
+      rg.addColorStop(0.35, ac + '55');
+      rg.addColorStop(1, 'transparent');
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = accents[wallIdx % accents.length] + '99';
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(6, 6, w - 12, h - 12);
+  }
+
+  drawDiscoWalls(level) {
     this.wallDecals.forEach((m, wallIdx) => {
-      const ctx = m.ctx;
-      const w = m.canvas.width;
-      const h = m.canvas.height;
-      const seed = (wallIdx + 1) * 1337 + (this.currentLevel + 1) * 911;
-
-      ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = 'rgba(6, 0, 14, 0.94)';
-      ctx.fillRect(0, 0, w, h);
-
-      const stripes = 18;
-      for (let s = 0; s < stripes; s++) {
-        const x = (s / stripes) * w;
-        const bw = w / stripes + 1.5;
-        const c1 = colors[(s + wallIdx) % colors.length];
-        const c2 = colors[(s + 2 + wallIdx) % colors.length];
-        const g = ctx.createLinearGradient(x, 0, x + bw * 0.6, h);
-        g.addColorStop(0, c1 + '66');
-        g.addColorStop(0.45, c2 + '33');
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(x, 0, bw, h);
-      }
-
-      ctx.globalAlpha = 0.07;
-      for (let y = 0; y < h; y += 5) {
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, y, w, 1);
-      }
-      ctx.globalAlpha = 1;
-
-      const spotCount = 14;
-      for (let i = 0; i < spotCount; i++) {
-        const sx = ((seed * (i + 3)) % 1000) / 1000 * (w - 48) + 24;
-        const sy = ((seed * (i + 7) + i * 19) % 1000) / 1000 * (h - 48) + 24;
-        const rad = 14 + ((seed + i * 37) % 36);
-        const ac = accents[i % accents.length];
-        const rg = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad);
-        rg.addColorStop(0, ac + 'dd');
-        rg.addColorStop(0.35, ac + '55');
-        rg.addColorStop(1, 'transparent');
-        ctx.fillStyle = rg;
-        ctx.beginPath();
-        ctx.arc(sx, sy, rad, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      ctx.strokeStyle = accents[wallIdx % accents.length] + '99';
-      ctx.lineWidth = 2.5;
-      ctx.strokeRect(6, 6, w - 12, h - 12);
-
+      this.drawDiscoWallPanel(level, this.currentLevel, wallIdx, m.ctx, m.canvas.width, m.canvas.height);
       m.texture.needsUpdate = true;
     });
   }
@@ -552,7 +624,20 @@ export class Arena {
     const level = LEVELS[this.currentLevel];
 
     this.scene.background = new THREE.Color(level.bg);
-    this.drawFloor(level);
+
+    if (this.levelAssetsPrebaked && this._floorTexturesByLevel.length === LEVELS.length) {
+      this.floorMesh.material.map = this._floorTexturesByLevel[this.currentLevel];
+      this.floorMesh.material.needsUpdate = true;
+      const row = this._wallTexturesByLevel[this.currentLevel];
+      for (let i = 0; i < this.wallDecals.length; i++) {
+        if (row[i]) {
+          this.wallDecals[i].plane.material.map = row[i];
+          this.wallDecals[i].plane.material.needsUpdate = true;
+        }
+      }
+    } else {
+      this.drawFloor(level);
+    }
 
     const wallColor = new THREE.Color(level.wallTint);
     this.wallMeshes.forEach(w => w.material.color.copy(wallColor));
@@ -562,7 +647,9 @@ export class Arena {
 
     if (this.baseMesh) this.baseMesh.material.color.set(level.bg);
 
-    this.drawDiscoWalls(level);
+    if (!this.levelAssetsPrebaked || this._floorTexturesByLevel.length !== LEVELS.length) {
+      this.drawDiscoWalls(level);
+    }
 
     const neon = new THREE.Color(level.neon);
     if (this.floorMat) {
@@ -570,7 +657,15 @@ export class Arena {
       this.floorMat.emissiveIntensity = 0.04;
     }
 
-    this.buildHazards(this.currentLevel);
+    this.clearHazards();
+    if (this.currentLevel < 2) {
+      if (this._hazardBuildRaf != null) {
+        cancelAnimationFrame(this._hazardBuildRaf);
+        this._hazardBuildRaf = null;
+      }
+    } else {
+      this.scheduleHazardMeshes(this.currentLevel);
+    }
     return level;
   }
 

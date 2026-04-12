@@ -37,6 +37,7 @@ export class UIManager {
       startScreen: document.getElementById('start-screen'),
       hud: document.getElementById('hud'),
       gameOver: document.getElementById('game-over'),
+      gameRetryBtn: document.getElementById('game-retry-btn'),
 
       healthBar: document.getElementById('health-bar'),
       healthText: document.getElementById('health-text'),
@@ -85,7 +86,10 @@ export class UIManager {
 
       specialChargeFill: document.getElementById('special-charge-fill'),
       specialVortexOrb: document.getElementById('special-vortex-orb'),
-      musicToggleBtn: document.getElementById('music-toggle-btn')
+      musicToggleBtn: document.getElementById('music-toggle-btn'),
+
+      waveCountdownOverlay: document.getElementById('wave-countdown-overlay'),
+      waveCountdownDigit: document.getElementById('wave-countdown-digit')
     };
 
     this.onSpecialActivate = null;
@@ -145,13 +149,26 @@ export class UIManager {
   showStartScreen() { this.setVisibility('start'); }
   showGame() { this.setVisibility('game'); }
 
-  showGameOver(stats) {
+  showGameOver(stats, onRetry) {
     this.setVisibility('gameover');
     if (this.elements.finalWave) this.elements.finalWave.textContent = stats.wave;
     if (this.elements.finalScore) this.elements.finalScore.textContent = stats.score.toLocaleString();
     if (this.elements.finalKills) this.elements.finalKills.textContent = (stats.kills ?? 0).toLocaleString();
     if (this.elements.finalDamage) this.elements.finalDamage.textContent = (stats.damageDealt ?? 0).toLocaleString();
     if (this.elements.finalCoins) this.elements.finalCoins.textContent = stats.coins.toLocaleString();
+
+    const btn = this.elements.gameRetryBtn;
+    if (btn && onRetry) {
+      const clone = btn.cloneNode(true);
+      btn.replaceWith(clone);
+      this.elements.gameRetryBtn = document.getElementById('game-retry-btn');
+      const go = (e) => {
+        e.preventDefault();
+        onRetry();
+      };
+      this.elements.gameRetryBtn.addEventListener('click', go, { once: true });
+      this.elements.gameRetryBtn.addEventListener('touchend', go, { once: true, passive: false });
+    }
   }
 
   updateStats(kills, damageDealt) {
@@ -176,6 +193,7 @@ export class UIManager {
     if (this.elements.victoryScreen) this.elements.victoryScreen.style.display = 'none';
 
     if (screen !== 'game') {
+      this.hideWaveCountdown();
       if (this.elements.specialVortexOrb) {
         this.elements.specialVortexOrb.style.display = 'none';
         this.elements.specialVortexOrb.classList.remove('special-vortex-ready');
@@ -184,6 +202,35 @@ export class UIManager {
     } else if (this.elements.musicToggleBtn) {
       this.elements.musicToggleBtn.style.display = 'flex';
     }
+  }
+
+  showWaveCountdown() {
+    const o = this.elements.waveCountdownOverlay;
+    if (!o) return;
+    o.style.display = 'flex';
+    o.setAttribute('aria-hidden', 'false');
+  }
+
+  hideWaveCountdown() {
+    const o = this.elements.waveCountdownOverlay;
+    if (o) {
+      o.style.display = 'none';
+      o.setAttribute('aria-hidden', 'true');
+    }
+    const d = this.elements.waveCountdownDigit;
+    if (d) {
+      d.classList.remove('wave-countdown-go', 'wave-countdown-flash');
+    }
+  }
+
+  setWaveCountdownDigit(text, isGo) {
+    const el = this.elements.waveCountdownDigit;
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('wave-countdown-go', !!isGo);
+    el.classList.remove('wave-countdown-flash');
+    void el.offsetWidth;
+    el.classList.add('wave-countdown-flash');
   }
 
   updateHealth(current, max) {
@@ -241,15 +288,18 @@ export class UIManager {
     if (this.elements.announceWaveNum) this.elements.announceWaveNum.textContent = waveNumber;
     if (this.elements.waveTaunt) this.elements.waveTaunt.textContent = taunt || '';
     if (this.elements.announceLevel) this.elements.announceLevel.textContent = isLevelChange ? `// ${levelName} //` : '';
-    if (this.elements.waveAnnouncement) {
-      this.elements.waveAnnouncement.classList.remove('show');
-      void this.elements.waveAnnouncement.offsetWidth;
-      this.elements.waveAnnouncement.classList.add('show');
-      const duration = isLevelChange ? 3500 : 2500;
-      this.waveAnnouncementTimeout = setTimeout(() => {
-        this.elements.waveAnnouncement.classList.remove('show');
-      }, duration);
-    }
+    const ann = this.elements.waveAnnouncement;
+    if (!ann) return;
+    const duration = isLevelChange ? 3500 : 2500;
+    ann.classList.remove('show');
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        ann.classList.add('show');
+        this.waveAnnouncementTimeout = setTimeout(() => {
+          ann.classList.remove('show');
+        }, duration);
+      });
+    });
   }
 
   updatePowerup(type, remainingTime) {
@@ -440,6 +490,7 @@ export class UIManager {
     this.updateWeaponName('DISCO BLASTER');
     this.updateSpecialCharge(0, SPECIAL_CHARGE_KILLS);
     this.setSpecialReady(false);
+    this.hideWaveCountdown();
 
     const orb = this.elements.specialVortexOrb;
     if (orb && !orb.dataset.bound) {

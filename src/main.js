@@ -34,20 +34,21 @@ class Game {
     const hc = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined;
     this.isLowTierMobile =
       this.isMobile && (((dm != null && dm <= 4) || (hc != null && hc <= 4)));
+    /** Plenty of RAM + cores (e.g. recent iPhone) — still mobile, but avoid over-throttling. */
+    this.isHighEndMobile =
+      this.isMobile &&
+      !this.isLowTierMobile &&
+      ((dm != null && dm >= 6) || (hc != null && hc >= 5));
+
+    this.perf = this._buildPerfProfile();
 
     this.currentLevelEffect = null;
     this.poisonTickTime = 0;
 
     this.allyShips = [];
     this.allyProjectiles = [];
-    this.allyBoltGeo = new THREE.IcosahedronGeometry(0.11, 1);
-    this.allyBoltMat = new THREE.MeshStandardMaterial({
-      color: 0xccfff0,
-      emissive: 0x00ffaa,
-      emissiveIntensity: 0.95,
-      metalness: 0.5,
-      roughness: 0.22
-    });
+    this.allyBoltGeo = null;
+    this.allyBoltMat = null;
     this.gameMusic = null;
     this.allyShipDuration = 18000;
     this.allyDurUpgrades = 0;
@@ -64,6 +65,33 @@ class Game {
     this.specialAttackActive = false;
     this.specialCharge = 0;
     this.specialReady = false;
+
+    this._waveCountdownRunning = false;
+  }
+
+  _buildPerfProfile() {
+    const m = this.isMobile;
+    const low = this.isLowTierMobile;
+    const high = this.isHighEndMobile;
+    return {
+      maxPixelRatio: m
+        ? Math.min(1.75, low ? 1 : high ? 1.65 : 1.35)
+        : Math.min(1.75, window.devicePixelRatio || 1),
+      powerPreference: m && low ? 'low-power' : 'high-performance',
+      floorTextureSize: m ? (low ? 640 : 896) : 1024,
+      wallDecalWidth: m ? (low ? 360 : 448) : 512,
+      wallDecalHeight: m ? (low ? 180 : 224) : 256,
+      floorAnisotropy: m ? (low ? 2 : 6) : 12,
+      maxPlayerProjectiles: m ? (low ? 14 : 22) : 34,
+      maxEnemyProjectiles: m ? (low ? 4 : 6) : 10,
+      maxEnemiesPerWave: m ? (low ? 9 : 12) : 16,
+      cylinderSegments: m ? (low ? 5 : 6) : 8,
+      poolClonesPerModel: m ? 2 : 3,
+      maxShootersPerWave: m ? 2 : 3,
+      maxCoinsAlive: m ? (low ? 40 : 65) : 110,
+      allyBoltGeometryDetail: m ? 0 : 1,
+      frameDeltaCap: m ? 0.052 : 0.06
+    };
   }
 
   async init() {
@@ -99,19 +127,19 @@ class Game {
         this.ui.updateLoadingProgress(`Models ${done} / ${total}`);
       });
       this.ui.updateLoadingProgress('Warming enemy pool…');
-      const poolN = this.isMobile ? 2 : 4;
-      await this.enemyManager.warmPool(poolN);
-      const parallel = [
+      this.enemyManager.warmPool(this.perf.poolClonesPerModel);
+      this.ui.updateLoadingProgress('Pre-compiling shaders…');
+      this.enemyManager.prewarmSkinnedMaterials(this.renderer, this.camera);
+      this.ui.updateLoadingProgress('Baking arena visuals…');
+      await this.arena.prebakeLevelTexturesAsync();
+      this.ui.updateLoadingProgress('Starting…');
+      Promise.all([
         this.deathScene.preload().catch(() => {}),
         this.dareDancers.preload().catch(() => {}),
-        this.specialAttack.preload().catch(() => {})
-      ];
-      if (!this.isMobile) {
-        parallel.push(this.waveClear.preload().catch(() => {}));
-      }
-      await Promise.all(parallel);
+        this.specialAttack.preload().catch(() => {}),
+        !this.isMobile ? this.waveClear.preload().catch(() => {}) : Promise.resolve()
+      ]).catch(() => {});
       if (this.isMobile) {
-        this.ui.updateLoadingProgress('Ready — extra assets load quietly');
         const kick = () => this.waveClear.preload().catch(() => {});
         if (typeof requestIdleCallback === 'function') {
           requestIdleCallback(() => kick(), { timeout: 8000 });
@@ -144,12 +172,13 @@ class Game {
     this.camera.position.set(0, 2, 0);
     this.scene.add(this.camera);
 
-    const maxPR = this.isMobile ? (this.isLowTierMobile ? 1 : 1.25) : 1;
+    const maxPR = this.perf.maxPixelRatio;
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
-      powerPreference: this.isMobile ? 'low-power' : 'high-performance',
+      powerPreference: this.perf.powerPreference,
       stencil: false,
-      alpha: false
+      alpha: false,
+      preserveDrawingBuffer: false
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPR));
@@ -161,7 +190,30 @@ class Game {
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     }
 
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener(
+      'webglcontextlost',
+      (e) => {
+        e.preventDefault();
+        this.isRunning = false;
+        this.clock.stop();
+      },
+      false
+    );
+
     document.getElementById('game-container').appendChild(this.renderer.domElement);
+
+    const d = this.perf.allyBoltGeometryDetail;
+    this.allyBoltGeo = new THREE.IcosahedronGeometry(0.11, d);
+    this.allyBoltMat = this.isMobile
+      ? new THREE.MeshBasicMaterial({ color: 0x99ffee })
+      : new THREE.MeshStandardMaterial({
+          color: 0xccfff0,
+          emissive: 0x00ffaa,
+          emissiveIntensity: 0.95,
+          metalness: 0.5,
+          roughness: 0.22
+        });
     this.createLighting();
 
     this.deathScene = new DeathScene();
@@ -172,10 +224,10 @@ class Game {
   }
 
   createLighting() {
-    const ambient = new THREE.AmbientLight(0xffffff, 1.05);
+    const ambient = new THREE.AmbientLight(0xffffff, this.isMobile ? 1.02 : 1.05);
     this.scene.add(ambient);
 
-    const sun = new THREE.DirectionalLight(0xffffff, 0.72);
+    const sun = new THREE.DirectionalLight(0xffffff, this.isMobile ? 0.68 : 0.72);
     sun.position.set(5, 15, 5);
     this.scene.add(sun);
 
@@ -185,7 +237,7 @@ class Game {
   }
 
   createPhysics() {
-    this.physicsWorld = new PhysicsWorld();
+    this.physicsWorld = new PhysicsWorld({ cylinderSegments: this.perf.cylinderSegments });
     this.physicsWorld.createGround(100);
   }
 
@@ -195,21 +247,34 @@ class Game {
   }
 
   createWeapon() {
-    this.weapon = new Weapon(this.camera, this.scene);
+    this.weapon = new Weapon(this.camera, this.scene, { maxProjectiles: this.perf.maxPlayerProjectiles });
   }
 
   createArena() {
-    this.arena = new Arena(this.scene, this.physicsWorld);
+    this.arena = new Arena(this.scene, this.physicsWorld, {
+      floorTextureSize: this.perf.floorTextureSize,
+      wallDecalWidth: this.perf.wallDecalWidth,
+      wallDecalHeight: this.perf.wallDecalHeight,
+      floorAnisotropy: this.perf.floorAnisotropy
+    });
   }
 
   createManagers() {
-    this.enemyManager = new EnemyManager(this.scene, this.physicsWorld);
+    this.enemyManager = new EnemyManager(this.scene, this.physicsWorld, {
+      maxEnemyProjectiles: this.perf.maxEnemyProjectiles,
+      maxShootersPerWave: this.perf.maxShootersPerWave,
+      poolReplenishTo: Math.max(2, this.perf.poolClonesPerModel + 1)
+    });
     this.enemyManager.onEnemyDeath = (enemy) => this.onEnemyKilled(enemy);
 
-    this.itemManager = new ItemManager(this.scene);
+    this.itemManager = new ItemManager(this.scene, { maxCoinsAlive: this.perf.maxCoinsAlive });
 
-    this.waveManager = new WaveManager(this.enemyManager);
+    this.waveManager = new WaveManager(this.enemyManager, {
+      maxEnemiesPerWave: this.perf.maxEnemiesPerWave,
+      hasActivePlayerProjectiles: () => this.weapon.hasActiveProjectiles()
+    });
     this.waveManager.setPlayerCamera(this.camera);
+    this.enemyManager.setWaveManager(this.waveManager);
 
     this.waveManager.onWaveStart = (wave, taunt, levelChanged) => {
       this.ui.updateWave(wave);
@@ -311,15 +376,28 @@ class Game {
       '/models/thriller_part3.fbx'
     ];
     let done = 0;
-    for (let i = 0; i < models.length; i++) {
-      await this.enemyManager.loadFBX(models[i]).catch(() => {});
+    const bump = () => {
       done++;
       onProgress?.(done, models.length);
-      if (i % 2 === 1) await new Promise(r => requestAnimationFrame(r));
-    }
+    };
+    await Promise.all(
+      models.map((path) =>
+        this.enemyManager.loadFBX(path).catch(() => {}).finally(bump)
+      )
+    );
   }
 
   setupEventListeners() {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.clock.stop();
+        this.gameMusic?.suspendForBackground();
+      } else if (this.isRunning) {
+        this.clock.start();
+        this.gameMusic?.resumeIfRunning();
+      }
+    });
+
     window.addEventListener('resize', () => this.onWindowResize());
     document.getElementById('start-screen').addEventListener('click', () => this.startGame());
     document.getElementById('start-screen').addEventListener('touchend', (e) => {
@@ -331,11 +409,10 @@ class Game {
     if (jumpBtn) {
       jumpBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        this.player.wantsToJump = true;
+        this.player.pendingJump = true;
       }, { passive: false });
       jumpBtn.addEventListener('touchend', (e) => {
         e.preventDefault();
-        this.player.wantsToJump = false;
       }, { passive: false });
     }
 
@@ -358,6 +435,7 @@ class Game {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.perf.maxPixelRatio));
     if (this.deathSequenceActive && this.deathScene) {
       this.deathScene.camera.aspect = this.camera.aspect;
       this.deathScene.camera.updateProjectionMatrix();
@@ -398,7 +476,125 @@ class Game {
       kills: this.kills,
       damageDealt: this.damageDealt,
       coins: this.coins
-    }, () => location.reload());
+    }, () => this.returnToTitle());
+  }
+
+  returnToTitle() {
+    this.isRunning = false;
+    this.gameMusic?.stop();
+    this.ui.syncMusicButton?.();
+    if (!this.isMobile && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+    if (this.isMobile) {
+      document.getElementById('mobile-controls')?.style.setProperty('display', 'none');
+    }
+    this.ui.showStartScreen();
+  }
+
+  restartRun() {
+    if (!this.modelsReady) return;
+    this.deathSequenceActive = false;
+    if (this.deathScene?.active) this.deathScene.stop();
+
+    this.score = 0;
+    this.coins = 0;
+    this.kills = 0;
+    this.damageDealt = 0;
+    this.screenShake = 0;
+    this.poisonTickTime = 0;
+    this.currentLevelEffect = null;
+    this.healthUpgrades = 0;
+    this.allyDurUpgrades = 0;
+    this.allyShipDuration = 18000;
+    this.unlockedWeapons = ['disco'];
+    this.currentWeapon = 'disco';
+    this.weapon.setWeapon('disco');
+    this.specialAttackActive = false;
+    this.specialCharge = 0;
+    this.specialReady = false;
+    this.specialAttack?.stop();
+    this.waveClear?.stop(false);
+    this.ui.setSpecialReady(false);
+    this.ui.updateSpecialCharge(0, SPECIAL_CHARGE_KILLS);
+
+    this.player.maxHealth = 300;
+    this.player.reset();
+    this.enemyManager.clear();
+    this.itemManager.clear();
+    this.waveManager.reset();
+    this.clearAllyShips();
+
+    this.arena.setLevel(0);
+    this.applyLevelEffect(LEVELS[0]);
+    if (this.discoLight) this.discoLight.color.set(LEVELS[0].neon);
+
+    this.ui.init();
+    this.ui.showGame();
+    this.ui.updateWeaponName('DISCO BLASTER');
+
+    if (this.isMobile) {
+      this.player.controls.lock();
+      document.getElementById('mobile-controls')?.style.setProperty('display', 'block');
+    } else {
+      this.player.controls.lock();
+    }
+
+    this.isRunning = true;
+    this.clock.start();
+
+    this.gameMusic?.stop();
+    this.gameMusic?.start();
+    this.ui.syncMusicButton?.();
+
+    this.player.inputFrozen = true;
+    this.weapon.isHolding = false;
+
+    this.animate();
+    void this.runWaveCountdownThenStartWave();
+  }
+
+  async runWaveCountdownThenStartWave() {
+    if (this._waveCountdownRunning) return;
+    this._waveCountdownRunning = true;
+    this.player.inputFrozen = true;
+    this.weapon.isHolding = false;
+
+    const tickMs = 700;
+    const goMs = 520;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    let wavePrimed = false;
+    try {
+      this.ui.showWaveCountdown();
+      if (!this.isRunning || this.player.isDead) return;
+
+      this.waveManager.startNextWave(this.player.getPosition(), { deferAnnouncement: true });
+      wavePrimed = true;
+      this.ui.updateWave(this.waveManager.currentWave);
+      this.ui.updateLevelName(this.arena.getLevelName());
+
+      for (const n of [3, 2, 1]) {
+        if (!this.isRunning || this.player.isDead) return;
+        this.ui.setWaveCountdownDigit(String(n), false);
+        this.waveManager.playCountdownTick(n);
+        await sleep(tickMs);
+      }
+      if (!this.isRunning || this.player.isDead) return;
+      this.ui.setWaveCountdownDigit('GO!', true);
+      this.waveManager.playCountdownGo();
+      await sleep(goMs);
+    } finally {
+      this.ui.hideWaveCountdown();
+      this._waveCountdownRunning = false;
+      if (wavePrimed) {
+        const ok = this.isRunning && !this.player.isDead;
+        this.waveManager.releaseDeferredWaveStart({ silent: !ok });
+      } else if (this.isRunning && !this.player.isDead) {
+        this.waveManager.startNextWave(this.player.getPosition());
+      }
+      this.player.inputFrozen = false;
+    }
   }
 
   showDareScreen(wave) {
@@ -473,73 +669,17 @@ class Game {
       this.player.controls.lock();
     }
 
-    this.waveManager.startNextWave(this.player.getPosition());
+    this.player.inputFrozen = true;
+    this.weapon.isHolding = false;
+
     this.animate();
+    void this.runWaveCountdownThenStartWave();
   }
 
   startGame() {
     if (this.isRunning) return;
     if (!this.modelsReady) return;
-
-    this.deathSequenceActive = false;
-    if (this.deathScene?.active) this.deathScene.stop();
-
-    this.score = 0;
-    this.coins = 0;
-    this.kills = 0;
-    this.damageDealt = 0;
-    this.screenShake = 0;
-    this.poisonTickTime = 0;
-    this.currentLevelEffect = null;
-    this.healthUpgrades = 0;
-    this.allyDurUpgrades = 0;
-    this.allyShipDuration = 18000;
-    this.unlockedWeapons = ['disco'];
-    this.currentWeapon = 'disco';
-    this.weapon.setWeapon('disco');
-    this.specialAttackActive = false;
-    this.specialCharge = 0;
-    this.specialReady = false;
-    this.player.inputFrozen = false;
-    this.specialAttack?.stop();
-    this.waveClear?.stop(false);
-    this.ui.setSpecialReady(false);
-    this.ui.updateSpecialCharge(0, SPECIAL_CHARGE_KILLS);
-
-    this.player.maxHealth = 300;
-    this.player.reset();
-    this.enemyManager.clear();
-    this.itemManager.clear();
-    this.waveManager.reset();
-    this.clearAllyShips();
-
-    this.arena.setLevel(0);
-    this.applyLevelEffect(LEVELS[0]);
-    if (this.discoLight) this.discoLight.color.set(LEVELS[0].neon);
-
-    this.ui.init();
-    this.ui.showGame();
-    this.ui.updateWeaponName('DISCO BLASTER');
-
-    if (this.isMobile) {
-      this.player.controls.lock();
-      document.getElementById('mobile-controls')?.style.setProperty('display', 'block');
-    } else {
-      this.player.controls.lock();
-    }
-
-    this.isRunning = true;
-    this.clock.start();
-
-    this.gameMusic?.stop();
-    this.gameMusic?.start();
-    this.ui.syncMusicButton?.();
-
-    setTimeout(() => {
-      if (this.isRunning) this.waveManager.startNextWave(this.player.getPosition());
-    }, 1000);
-
-    this.animate();
+    this.restartRun();
   }
 
   onEnemyKilled(enemy) {
@@ -581,6 +721,7 @@ class Game {
 
   handleShooting(playerPos) {
     if (this.specialAttackActive) return;
+    if (this.player.inputFrozen) return;
     if (!this.player.controls.isLocked) return;
 
     const shot = this.weapon.tryFire(this.player.rapidFire);
@@ -942,6 +1083,7 @@ class Game {
 
   handleArenaTraps(playerPos) {
     if (this.specialAttackActive) return;
+    if (this.waveManager?.combatHoldActive) return;
     if (!this.arena || !this.isRunning) return;
     const now = performance.now();
     const dmg = this.arena.pollTrapDamage(playerPos.x, playerPos.z, playerPos.y, now);
@@ -953,6 +1095,7 @@ class Game {
 
   handleEnemyDamage(playerPos) {
     if (this.specialAttackActive) return;
+    if (this.waveManager?.combatHoldActive) return;
     const now = performance.now();
     const px = playerPos.x, pz = playerPos.z;
     let tookDamage = false;
@@ -1094,7 +1237,7 @@ class Game {
       coins: this.coins,
       kills: this.kills,
       damageDealt: this.damageDealt
-    });
+    }, () => this.restartRun());
   }
 
   animateDeath() {
@@ -1107,7 +1250,7 @@ class Game {
   animate() {
     if (this.isRunning && this.waveClear?.active) {
       requestAnimationFrame(() => this.animate());
-      const delta = Math.min(this.clock.getDelta(), 0.06);
+      const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
       const playerPos = this.player.getPosition();
       this.physicsWorld.update(delta);
       this.player.update(delta);
@@ -1121,7 +1264,7 @@ class Game {
 
     requestAnimationFrame(() => this.animate());
 
-    const delta = Math.min(this.clock.getDelta(), 0.05);
+    const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
     const playerPos = this.player.getPosition();
 
     this.physicsWorld.update(delta);

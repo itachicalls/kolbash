@@ -33,7 +33,7 @@ export const WEAPON_DEFS = {
 };
 
 export class Weapon {
-  constructor(camera, scene) {
+  constructor(camera, scene, opts = {}) {
     this.camera = camera;
     this.scene = scene;
 
@@ -56,7 +56,7 @@ export class Weapon {
     };
 
     this.projectiles = [];
-    this.maxProjectiles = 34;
+    this.maxProjectiles = opts.maxProjectiles ?? 34;
     this._lastShootSoundMs = 0;
     this._lastHitSoundMs = 0;
     this._vel = new THREE.Vector3();
@@ -332,6 +332,13 @@ export class Weapon {
     if (this._vel.lengthSq() < 1e-6) this._vel.set(0, 0, -1);
     else this._vel.normalize();
     proj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), this._vel);
+  }
+
+  hasActiveProjectiles() {
+    for (let i = 0; i < this.projectiles.length; i++) {
+      if (this.projectiles[i].userData.active) return true;
+    }
+    return false;
   }
 
   update(deltaTime) {

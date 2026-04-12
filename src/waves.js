@@ -36,7 +36,7 @@ const WAVE_TAUNTS = [
 ];
 
 export class WaveManager {
-  constructor(enemyManager) {
+  constructor(enemyManager, opts = {}) {
     this.enemyManager = enemyManager;
 
     this.currentWave = 0;
@@ -48,7 +48,7 @@ export class WaveManager {
 
     this.baseEnemyCount = 6;
     this.enemiesPerWaveIncrease = 2;
-    this.maxEnemiesPerWave = 16;
+    this.maxEnemiesPerWave = opts.maxEnemiesPerWave ?? 16;
     this.healthMultiplierPerWave = 1.06;
     this.speedMultiplierPerWave = 1.02;
 
@@ -63,12 +63,23 @@ export class WaveManager {
     this.lastSpawnTime = 0;
     this.playerCamera = null;
 
+    this._fwdScratch = new THREE.Vector3(0, 0, -1);
+    this._spawnDirScratch = new THREE.Vector3();
+    this._yAxis = new THREE.Vector3(0, 1, 0);
+
+    /** When true, enemies animate in place but do not move or shoot (pre-GO countdown priming). */
+    this.combatHoldActive = false;
+    this._deferredWaveAnnounce = null;
+
     this.audioContext = null;
     this.initAudio();
 
     this.onWaveStart = null;
     this.onWaveComplete = null;
     this.onLevelChange = null;
+
+    /** When set, wave-end cinematic waits until this returns false (e.g. player projectiles). */
+    this._hasActivePlayerProjectiles = opts.hasActivePlayerProjectiles ?? null;
   }
 
   setPlayerCamera(camera) {
@@ -86,17 +97,17 @@ export class WaveManager {
     try {
       if (this.audioContext.state === 'suspended') this.audioContext.resume();
       const now = this.audioContext.currentTime;
-      [80, 100, 80, 120, 440, 554, 659].forEach((freq, i) => {
+      [80, 100, 120, 440, 554].forEach((freq, i) => {
         const osc = this.audioContext.createOscillator();
         const gain = this.audioContext.createGain();
         osc.connect(gain);
         gain.connect(this.audioContext.destination);
-        osc.type = i < 4 ? 'sawtooth' : 'square';
+        osc.type = i < 3 ? 'sawtooth' : 'square';
         osc.frequency.setValueAtTime(freq, now + i * 0.08);
-        gain.gain.setValueAtTime(i < 4 ? 0.12 : 0.08, now + i * 0.08);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.08 + 0.12);
+        gain.gain.setValueAtTime(i < 3 ? 0.11 : 0.07, now + i * 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.08 + 0.11);
         osc.start(now + i * 0.08);
-        osc.stop(now + i * 0.08 + 0.12);
+        osc.stop(now + i * 0.08 + 0.11);
       });
     } catch (e) {}
   }
@@ -106,17 +117,60 @@ export class WaveManager {
     try {
       if (this.audioContext.state === 'suspended') this.audioContext.resume();
       const now = this.audioContext.currentTime;
-      [220, 330, 440, 554, 660, 880].forEach((freq, i) => {
+      [220, 440, 660, 880].forEach((freq, i) => {
         const osc = this.audioContext.createOscillator();
         const gain = this.audioContext.createGain();
         osc.connect(gain);
         gain.connect(this.audioContext.destination);
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, now + i * 0.06);
-        gain.gain.setValueAtTime(0.1, now + i * 0.06);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.06 + 0.15);
-        osc.start(now + i * 0.06);
-        osc.stop(now + i * 0.06 + 0.15);
+        osc.frequency.setValueAtTime(freq, now + i * 0.07);
+        gain.gain.setValueAtTime(0.09, now + i * 0.07);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.07 + 0.14);
+        osc.start(now + i * 0.07);
+        osc.stop(now + i * 0.07 + 0.14);
+      });
+    } catch (e) {}
+  }
+
+  /** Short pre-wave tick (3, 2, 1) — Web Audio only, no external file. */
+  playCountdownTick(n) {
+    if (!this.audioContext) return;
+    try {
+      if (this.audioContext.state === 'suspended') this.audioContext.resume();
+      const now = this.audioContext.currentTime;
+      const base = n === 3 ? 196 : n === 2 ? 262 : 330;
+      const osc = this.audioContext.createOscillator();
+      const gain = this.audioContext.createGain();
+      osc.connect(gain);
+      gain.connect(this.audioContext.destination);
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(base, now);
+      osc.frequency.exponentialRampToValueAtTime(base * 1.55, now + 0.04);
+      gain.gain.setValueAtTime(0.075, now);
+      gain.gain.exponentialRampToValueAtTime(0.0015, now + 0.085);
+      osc.start(now);
+      osc.stop(now + 0.09);
+    } catch (e) {}
+  }
+
+  /** Short “GO!” sting — layered disco stab. */
+  playCountdownGo() {
+    if (!this.audioContext) return;
+    try {
+      if (this.audioContext.state === 'suspended') this.audioContext.resume();
+      const now = this.audioContext.currentTime;
+      const freqs = [392, 523.25, 659.25];
+      freqs.forEach((freq, i) => {
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+        osc.connect(gain);
+        gain.connect(this.audioContext.destination);
+        osc.type = i === 0 ? 'sawtooth' : 'square';
+        osc.frequency.setValueAtTime(freq, now + i * 0.012);
+        gain.gain.setValueAtTime(i === 0 ? 0.06 : 0.045, now + i * 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0015, now + i * 0.012 + 0.14);
+        osc.start(now + i * 0.012);
+        osc.stop(now + i * 0.012 + 0.16);
       });
     } catch (e) {}
   }
@@ -147,7 +201,19 @@ export class WaveManager {
     }
   }
 
-  startNextWave(playerPosition) {
+  /**
+   * @param {object} [options]
+   * @param {boolean} [options.deferAnnouncement] If true, wave HUD/audio runs at releaseDeferredWaveStart();
+   *   spawn queue begins immediately (use during pre-GO countdown so GPU cost lands while input is frozen).
+   */
+  startNextWave(playerPosition, options = {}) {
+    const deferAnnouncement = options.deferAnnouncement === true;
+
+    if (!deferAnnouncement) {
+      this.combatHoldActive = false;
+      this._deferredWaveAnnounce = null;
+    }
+
     this.currentWave++;
     this.isWaveActive = true;
     this.waveStartTime = performance.now();
@@ -157,15 +223,14 @@ export class WaveManager {
     this.currentLevelIndex = newLevelIndex;
 
     if (levelChanged && this.onLevelChange) {
-      this.playLevelChangeSound();
       this.onLevelChange(newLevelIndex);
+      requestAnimationFrame(() => this.playLevelChangeSound());
     }
-
-    requestAnimationFrame(() => this.playWaveStartSound());
 
     this.spawnDelay = this.currentWave <= 4 ? this.earlySpawnDelay : 400;
 
-    let forwardDir = new THREE.Vector3(0, 0, -1);
+    const forwardDir = this._fwdScratch;
+    forwardDir.set(0, 0, -1);
     if (this.playerCamera) {
       this.playerCamera.getWorldDirection(forwardDir);
       forwardDir.y = 0;
@@ -210,7 +275,7 @@ export class WaveManager {
         const spreadAngle = Math.PI * 1.4;
         const angleOffset = ((i / (enemyCount - 1 || 1)) - 0.5) * spreadAngle;
 
-        const spawnDir = forwardDir.clone();
+        const spawnDir = this._spawnDirScratch.copy(forwardDir);
         const cos = Math.cos(angleOffset);
         const sin = Math.sin(angleOffset);
         spawnDir.x = forwardDir.x * cos - forwardDir.z * sin;
@@ -218,7 +283,7 @@ export class WaveManager {
 
         const distance = this.spawnRadiusMin + Math.random() * (this.spawnRadiusMax - this.spawnRadiusMin);
         const jitter = (Math.random() - 0.5) * Math.PI * 0.3;
-        spawnDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), jitter);
+        spawnDir.applyAxisAngle(this._yAxis, jitter);
 
         spawnPos = new THREE.Vector3(
           playerPosition.x + spawnDir.x * distance,
@@ -242,9 +307,41 @@ export class WaveManager {
     }
 
     const taunt = WAVE_TAUNTS[Math.floor(Math.random() * WAVE_TAUNTS.length)];
-    if (this.onWaveStart) this.onWaveStart(this.currentWave, taunt, levelChanged);
+    const waveNum = this.currentWave;
+    const onStart = this.onWaveStart;
 
-    this.lastSpawnTime = performance.now();
+    if (deferAnnouncement) {
+      this.combatHoldActive = true;
+      this._deferredWaveAnnounce = { waveNum, taunt, levelChanged, onStart };
+      this.lastSpawnTime = performance.now() - this.spawnDelay - 1;
+    } else {
+      this.lastSpawnTime = performance.now();
+      requestAnimationFrame(() => {
+        this.playWaveStartSound();
+        requestAnimationFrame(() => {
+          if (onStart) onStart(waveNum, taunt, levelChanged);
+        });
+      });
+    }
+  }
+
+  /**
+   * Clears combat hold so enemies can engage.
+   * @param {{ silent?: boolean }} [options] If silent, skip sound + HUD announcement (aborted countdown).
+   */
+  releaseDeferredWaveStart(options = {}) {
+    const silent = options.silent === true;
+    const payload = this._deferredWaveAnnounce;
+    this._deferredWaveAnnounce = null;
+    this.combatHoldActive = false;
+    if (!payload || silent) return;
+    const { waveNum, taunt, levelChanged, onStart } = payload;
+    requestAnimationFrame(() => {
+      this.playWaveStartSound();
+      requestAnimationFrame(() => {
+        if (onStart) onStart(waveNum, taunt, levelChanged);
+      });
+    });
   }
 
   getWaveModifiers() {
@@ -276,9 +373,14 @@ export class WaveManager {
 
     if (this.isWaveActive && this.spawnQueue.length === 0) {
       if (this.enemyManager.getAliveCount() === 0) {
-        this.isWaveActive = false;
-        this.lastWaveEndTime = now;
-        if (this.onWaveComplete) this.onWaveComplete(this.currentWave);
+        const visualsClear = this.enemyManager.isWaveClearForCinematic();
+        const playerShotsDone =
+          !this._hasActivePlayerProjectiles || !this._hasActivePlayerProjectiles();
+        if (visualsClear && playerShotsDone) {
+          this.isWaveActive = false;
+          this.lastWaveEndTime = now;
+          if (this.onWaveComplete) this.onWaveComplete(this.currentWave);
+        }
       }
     }
   }
@@ -296,5 +398,7 @@ export class WaveManager {
     this.lastWaveEndTime = 0;
     this.spawnQueue = [];
     this.lastSpawnTime = 0;
+    this.combatHoldActive = false;
+    this._deferredWaveAnnounce = null;
   }
 }

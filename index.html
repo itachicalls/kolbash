@@ -333,6 +333,60 @@
       background: radial-gradient(ellipse at center, transparent 0%, rgba(255,0,0,0.4) 100%);
     }
 
+    /* ===== PRE-WAVE COUNTDOWN (disco) ===== */
+    #wave-countdown-overlay {
+      position: fixed; inset: 0; z-index: 350;
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      pointer-events: none; background: radial-gradient(ellipse at 50% 45%, rgba(80,0,90,0.35) 0%, rgba(5,0,12,0.82) 55%, rgba(0,0,0,0.92) 100%);
+    }
+    #wave-countdown-overlay::before {
+      content: ''; position: absolute; inset: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,0,200,0.04) 3px, rgba(255,0,200,0.04) 6px);
+      animation: countdownScan 6s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes countdownScan { to { transform: translateY(12px); } }
+
+    .wave-countdown-glow {
+      position: absolute; width: min(72vw, 420px); height: min(72vw, 420px);
+      border-radius: 50%;
+      background: conic-gradient(from 0deg, #ff00ff, #00ffff, #ffee00, #ff00aa, #ff00ff);
+      opacity: 0.22; filter: blur(36px);
+      animation: countdownSpin 4s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes countdownSpin { to { transform: rotate(360deg); } }
+
+    #wave-countdown-digit {
+      position: relative; z-index: 1;
+      font-family: 'Orbitron', monospace; font-weight: 900;
+      font-size: clamp(4.5rem, 18vw, 9rem); letter-spacing: 0.08em; line-height: 1;
+      background: linear-gradient(185deg, #fff 0%, #ff66ff 35%, #00ffff 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 28px rgba(255,0,200,0.75)) drop-shadow(0 0 48px rgba(0,255,255,0.35));
+    }
+    #wave-countdown-digit.wave-countdown-flash {
+      animation: countdownPop 0.48s ease-out both;
+    }
+    #wave-countdown-digit.wave-countdown-go {
+      font-size: clamp(3.2rem, 14vw, 6.5rem); letter-spacing: 0.22em;
+      background: linear-gradient(180deg, #ffff88 0%, #00ffcc 50%, #ff00aa 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    #wave-countdown-digit.wave-countdown-go.wave-countdown-flash {
+      animation: countdownGoPulse 0.42s ease-out both;
+    }
+    @keyframes countdownPop {
+      0% { transform: scale(2.2); opacity: 0; filter: blur(6px); }
+      55% { transform: scale(0.92); opacity: 1; filter: blur(0); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    @keyframes countdownGoPulse {
+      0% { transform: scale(0.6); opacity: 0; }
+      40% { transform: scale(1.12); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
     /* ===== DARE SCREEN ===== */
     #dare-screen {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -652,6 +706,9 @@
       #wave-announcement .wave-taunt { font-size: 0.8rem; }
       #wave-announcement .level-name { font-size: 0.65rem; }
 
+      #wave-countdown-digit { font-size: clamp(3.2rem, 22vw, 5.5rem); }
+      #wave-countdown-digit.wave-countdown-go { font-size: clamp(2.4rem, 16vw, 4rem); }
+
       #dare-screen .dare-title { font-size: 2rem; }
       #dare-wave-cleared { font-size: 0.8rem; }
       #dare-text { font-size: 0.9rem; }
@@ -796,6 +853,11 @@
     </div>
   </div>
 
+  <div id="wave-countdown-overlay" style="display: none;" aria-hidden="true">
+    <div class="wave-countdown-glow" aria-hidden="true"></div>
+    <div id="wave-countdown-digit">3</div>
+  </div>
+
   <!-- Dare Screen (between waves) -->
   <div id="dare-screen">
     <canvas id="dare-dancers-canvas" aria-hidden="true"></canvas>
@@ -842,7 +904,7 @@
       <div class="stat"><div class="label">Damage</div><div class="value" id="final-damage">0</div></div>
       <div class="stat"><div class="label">Coins</div><div class="value" id="final-coins">0</div></div>
     </div>
-    <button class="restart-btn" onclick="location.reload()">TRY AGAIN</button>
+    <button type="button" class="restart-btn" id="game-retry-btn">TRY AGAIN</button>
   </div>
 
   <div id="victory-screen">

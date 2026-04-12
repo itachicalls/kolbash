@@ -80,4 +80,17 @@ export class GameMusic {
     this._userPaused = false;
     this._emit();
   }
+
+  /** Pause when tab hidden (saves CPU / audio on mobile). */
+  suspendForBackground() {
+    try {
+      this.audio.pause();
+    } catch (e) {}
+  }
+
+  /** Resume after tab visible if the bed was running and user did not pause. */
+  resumeIfRunning() {
+    if (!this._started || this._userPaused) return;
+    this.audio.play().catch(() => {});
+  }
 }

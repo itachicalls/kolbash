@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 
 export class ItemManager {
-  constructor(scene) {
+  constructor(scene, opts = {}) {
     this.scene = scene;
     this.coins = [];
     this.powerups = [];
@@ -26,6 +26,8 @@ export class ItemManager {
     
     this.doubleCoinsMult = 1;
     this.doubleCoinsEndTime = 0;
+
+    this.maxCoinsAlive = opts.maxCoinsAlive ?? 110;
     
     this.audioContext = null;
     this.initAudio();
@@ -98,6 +100,13 @@ export class ItemManager {
   }
   
   spawnCoin(position) {
+    while (this.coins.length >= this.maxCoinsAlive) {
+      const oldest = this.coins.shift();
+      if (oldest) {
+        this.scene.remove(oldest);
+      }
+    }
+
     const group = new THREE.Group();
     const core = new THREE.Mesh(this.coinGeo, this.coinMat);
     group.add(core);

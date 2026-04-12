@@ -5,7 +5,8 @@
 import * as CANNON from 'cannon-es';
 
 export class PhysicsWorld {
-  constructor() {
+  constructor(opts = {}) {
+    this._cylSegments = opts.cylinderSegments ?? 8;
     this.world = new CANNON.World();
     this.world.gravity.set(0, -20, 0);
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
@@ -61,7 +62,7 @@ export class PhysicsWorld {
     });
 
     // Main cylinder
-    const cylinderShape = new CANNON.Cylinder(radius, radius, height - radius * 2, 8);
+    const cylinderShape = new CANNON.Cylinder(radius, radius, height - radius * 2, this._cylSegments);
     playerBody.addShape(cylinderShape);
 
     // Bottom sphere
@@ -83,7 +84,7 @@ export class PhysicsWorld {
       position: new CANNON.Vec3(position.x, position.y, position.z)
     });
 
-    const shape = new CANNON.Cylinder(radius, radius, height, 8);
+    const shape = new CANNON.Cylinder(radius, radius, height, this._cylSegments);
     enemyBody.addShape(shape);
 
     this.world.addBody(enemyBody);

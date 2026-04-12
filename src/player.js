@@ -6,6 +6,10 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import * as CANNON from 'cannon-es';
 
+/** Half-size of playable floor (walls at ±25); keep body center inside with margin. */
+const MAP_HALF = 23.55;
+const BODY_RADIUS = 0.4;
+
 export class Player {
   constructor(camera, physicsWorld, domElement) {
     this.camera = camera;
@@ -17,14 +21,18 @@ export class Player {
 
     this.moveSpeed = 8;
     this.jumpForce = 8;
-    this.canJump = true;
+    /** Extra jumps while airborne (1 = double jump total: ground + one mid-air). */
+    this.airJumpsLeft = 0;
     this.isOnGround = false;
+    /** Ignore floor ray briefly after jumping so two quick taps are not both ground jumps. */
+    this.groundSuppressUntil = 0;
 
     this.moveForward = false;
     this.moveBackward = false;
     this.moveLeft = false;
     this.moveRight = false;
-    this.wantsToJump = false;
+    /** True for one frame after Space / mobile jump (prevents infinite jumps while key held). */
+    this.pendingJump = false;
 
     this.velocity = new THREE.Vector3();
     this.direction = new THREE.Vector3();
@@ -47,6 +55,7 @@ export class Player {
     this.body = physicsWorld.createPlayerBody({ x: 0, y: 3, z: 0 });
     this.groundRayResult = new CANNON.RaycastResult();
     this.setupControls();
+    this.airJumpsLeft = 1;
 
     this.rapidFire = false;
     this.rapidFireEndTime = 0;
@@ -150,14 +159,6 @@ export class Player {
   setupControls() {
     document.addEventListener('keydown', (e) => this.onKeyDown(e));
     document.addEventListener('keyup', (e) => this.onKeyUp(e));
-
-    this.body.addEventListener('collide', (event) => {
-      const contact = event.contact;
-      if (contact.ni.y > 0.5) {
-        this.isOnGround = true;
-        this.canJump = true;
-      }
-    });
   }
 
   onKeyDown(event) {
@@ -167,7 +168,7 @@ export class Player {
       case 'KeyS': case 'ArrowDown': this.moveBackward = true; break;
       case 'KeyA': case 'ArrowLeft': this.moveLeft = true; break;
       case 'KeyD': case 'ArrowRight': this.moveRight = true; break;
-      case 'Space': this.wantsToJump = true; break;
+      case 'Space': this.pendingJump = true; break;
     }
   }
 
@@ -177,7 +178,7 @@ export class Player {
       case 'KeyS': case 'ArrowDown': this.moveBackward = false; break;
       case 'KeyA': case 'ArrowLeft': this.moveLeft = false; break;
       case 'KeyD': case 'ArrowRight': this.moveRight = false; break;
-      case 'Space': this.wantsToJump = false; break;
+      case 'Space': break;
     }
   }
 
@@ -214,9 +215,12 @@ export class Player {
     const end = new CANNON.Vec3(this.body.position.x, this.body.position.y - 1.2, this.body.position.z);
     const ray = new CANNON.Ray(start, end);
     ray.intersectWorld(this.physicsWorld.world, { result: this.groundRayResult, skipBackfaces: true });
-    if (this.groundRayResult.hasHit && this.groundRayResult.distance < 1.15) {
+    const now = performance.now();
+    const hitGround = this.groundRayResult.hasHit && this.groundRayResult.distance < 1.15;
+    const suppressed = now < this.groundSuppressUntil;
+    if (hitGround && !suppressed) {
       this.isOnGround = true;
-      this.canJump = true;
+      this.airJumpsLeft = 1;
     } else {
       this.isOnGround = false;
     }
@@ -260,10 +264,28 @@ export class Player {
     this.body.velocity.x = hasInput ? this.direction.x * this.moveSpeed : 0;
     this.body.velocity.z = hasInput ? this.direction.z * this.moveSpeed : 0;
 
-    if (this.wantsToJump && this.canJump && this.isOnGround) {
-      this.body.velocity.y = this.jumpForce;
-      this.canJump = false;
-      this.isOnGround = false;
+    if (this.pendingJump) {
+      this.pendingJump = false;
+      if (this.isOnGround) {
+        this.body.velocity.y = this.jumpForce;
+        this.isOnGround = false;
+        this.groundSuppressUntil = performance.now() + 90;
+      } else if (this.airJumpsLeft > 0) {
+        this.body.velocity.y = this.jumpForce;
+        this.airJumpsLeft--;
+        this.groundSuppressUntil = performance.now() + 90;
+      }
+    }
+
+    const lim = MAP_HALF - BODY_RADIUS;
+    let { x, z } = this.body.position;
+    if (x < -lim || x > lim || z < -lim || z > lim) {
+      x = Math.max(-lim, Math.min(lim, x));
+      z = Math.max(-lim, Math.min(lim, z));
+      this.body.position.x = x;
+      this.body.position.z = z;
+      this.body.velocity.x = 0;
+      this.body.velocity.z = 0;
     }
 
     this.camera.position.set(this.body.position.x, this.body.position.y + 0.6, this.body.position.z);
@@ -297,6 +319,9 @@ export class Player {
     this.inputFrozen = false;
     this.body.position.set(0, 3, 0);
     this.body.velocity.set(0, 0, 0);
+    this.airJumpsLeft = 1;
+    this.pendingJump = false;
+    this.groundSuppressUntil = 0;
     this.rapidFire = false;
     if (this.isMobile) {
       this.cameraYaw = 0;

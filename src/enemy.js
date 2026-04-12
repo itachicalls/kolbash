@@ -7,7 +7,7 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 export class EnemyManager {
-  constructor(scene, physicsWorld) {
+  constructor(scene, physicsWorld, opts = {}) {
     this.scene = scene;
     this.physicsWorld = physicsWorld;
     this.enemies = [];
@@ -44,13 +44,20 @@ export class EnemyManager {
     this.slowMotionEndTime = 0;
 
     this.enemyProjectiles = [];
-    this.maxEnemyProjectiles = 10;
+    this.maxEnemyProjectiles = opts.maxEnemyProjectiles ?? 10;
     this.enemyProjectileGeo = new THREE.TorusGeometry(0.08, 0.025, 6, 8);
     this.shootersThisWave = 0;
-    this.maxShootersPerWave = 3;
+    this.maxShootersPerWave = opts.maxShootersPerWave ?? 3;
+    this.poolReplenishTo = opts.poolReplenishTo ?? 3;
 
     this.audioContext = null;
     this.initAudio();
+
+    this.waveManager = null;
+  }
+
+  setWaveManager(waveManager) {
+    this.waveManager = waveManager;
   }
 
   // ── Audio ──
@@ -77,6 +84,26 @@ export class EnemyManager {
       osc.start();
       osc.stop(this.audioContext.currentTime + (isBoss ? 0.5 : 0.2));
     } catch (e) {}
+  }
+
+  /**
+   * Yaw-only toward player plus model faceOffset. Full lookAt + Euler Y tweaks
+   * mis-orients FBX roots when the player moves behind the enemy.
+   */
+  applyEnemyFaceYaw(enemy, data, dirXZ, dist, now) {
+    if (dist < 0.02) return;
+    const off = (data.type.faceOffset ?? 0) * Math.PI / 180;
+    const yaw = Math.atan2(dirXZ.x, dirXZ.z) + off;
+    enemy.rotation.order = 'YXZ';
+    enemy.rotation.y = yaw;
+    enemy.rotation.x = 0;
+    const b = data.type.behavior || 'standard';
+    if (b === 'jumper' && !data.isLeaping) {
+      const bt = (now - data.spawnTime) / 1000;
+      enemy.rotation.z = Math.sin(bt * 8) * 0.03;
+    } else {
+      enemy.rotation.z = 0;
+    }
   }
 
   // ── Model Loading & Pool ──
@@ -117,12 +144,11 @@ export class EnemyManager {
     return promise;
   }
 
-  async warmPool(clonesPerModel = 3) {
+  warmPool(clonesPerModel = 3) {
     for (const [path, modelData] of this.modelCache) {
       if (!this.modelPool.has(path)) this.modelPool.set(path, []);
       const pool = this.modelPool.get(path);
-      for (let i = pool.length; i < clonesPerModel; i++) {
-        await new Promise(r => setTimeout(r, 0));
+      while (pool.length < clonesPerModel) {
         try {
           pool.push(SkeletonUtils.clone(modelData.fbx));
         } catch (e) {}
@@ -130,12 +156,69 @@ export class EnemyManager {
     }
   }
 
-  async replenishPool() {
+  /**
+   * Pre-compile skinned FBX shader programs during loading so the first real spawn
+   * does not hitch the frame (especially on mobile).
+   */
+  prewarmSkinnedMaterials(renderer, camera) {
+    if (!renderer?.compile || !camera || this.modelCache.size === 0) return;
+
+    const warmScene = new THREE.Scene();
+    const amb = new THREE.AmbientLight(0xffffff, 1.05);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.72);
+    dir.position.set(3, 10, 6);
+    warmScene.add(amb, dir);
+
+    const group = new THREE.Group();
+    const paths = [];
+    for (const t of this.enemyTypes) {
+      if (!paths.includes(t.model)) paths.push(t.model);
+    }
+
+    const taken = [];
+    for (let pi = 0; pi < paths.length; pi++) {
+      const path = paths[pi];
+      const modelData = this.modelCache.get(path);
+      if (!modelData) continue;
+      const m = this.getPooledClone(path);
+      if (!m) continue;
+      const scale = this.targetHeight / modelData.originalHeight;
+      m.scale.setScalar(scale);
+      m.position.set((pi - paths.length * 0.5) * 1.25, 0, 0);
+      m.userData._warmReturnPath = path;
+      group.add(m);
+      taken.push(m);
+    }
+    if (taken.length === 0) return;
+
+    warmScene.add(group);
+    group.updateMatrixWorld(true);
+
+    const cam = new THREE.PerspectiveCamera(camera.fov, camera.aspect, camera.near, camera.far);
+    cam.position.set(0, 1.15, 5.2);
+    cam.lookAt(0, 0.85, 0);
+
+    try {
+      renderer.compile(warmScene, cam);
+    } catch (e) {}
+
+    warmScene.remove(group);
+    for (const m of taken) {
+      const path = m.userData._warmReturnPath;
+      delete m.userData._warmReturnPath;
+      m.scale.setScalar(1);
+      m.position.set(0, 0, 0);
+      const pool = this.modelPool.get(path);
+      if (pool) pool.push(m);
+    }
+  }
+
+  replenishPool() {
+    const target = this.poolReplenishTo;
     for (const [path, modelData] of this.modelCache) {
       const pool = this.modelPool.get(path) || [];
       this.modelPool.set(path, pool);
-      while (pool.length < 3) {
-        await new Promise(r => setTimeout(r, 16));
+      while (pool.length < target) {
         try {
           pool.push(SkeletonUtils.clone(modelData.fbx));
         } catch (e) {}
@@ -432,8 +515,20 @@ export class EnemyManager {
           enemy.scale.setScalar(Math.max(0.01, s));
         }
         if (data.mixer) data.mixer.update(deltaTime * speedMult);
-        enemy.lookAt(playerPosition.x, playerPosition.y, playerPosition.z);
-        enemy.rotation.y += (data.type.faceOffset ?? 0) * Math.PI / 180;
+        const toPlayer = this._toPlayer;
+        toPlayer.subVectors(playerPosition, enemy.position);
+        toPlayer.y = 0;
+        const sd = toPlayer.length();
+        this.applyEnemyFaceYaw(enemy, data, toPlayer, sd, now);
+        continue;
+      }
+
+      if (this.waveManager?.combatHoldActive) {
+        if (data.mixer) data.mixer.update(deltaTime * speedMult);
+        const toPlayer = this._toPlayer;
+        toPlayer.subVectors(playerPosition, enemy.position);
+        toPlayer.y = 0;
+        this.applyEnemyFaceYaw(enemy, data, toPlayer, toPlayer.length(), now);
         continue;
       }
 
@@ -458,7 +553,7 @@ export class EnemyManager {
       const toPlayer = this._toPlayer;
       toPlayer.subVectors(playerPosition, enemy.position);
       toPlayer.y = 0;
-      const dist = toPlayer.length();
+      let dist = toPlayer.length();
 
       // ── Jump Attack leap mechanic ──
       if (data.type.isJumpAttack && !data.isLeaping) {
@@ -496,48 +591,58 @@ export class EnemyManager {
 
         switch (behavior) {
           case 'flanker': {
-            if (dist > 8) {
+            if (dist > 18) {
+              mx = toPlayer.x * spd * 1.55;
+              mz = toPlayer.z * spd * 1.55;
+            } else if (dist > 8) {
               const a = Math.PI * 0.3;
               const ca = Math.cos(a), sa = Math.sin(a);
-              mx = (toPlayer.x * ca - toPlayer.z * sa) * spd * 1.2;
-              mz = (toPlayer.x * sa + toPlayer.z * ca) * spd * 1.2;
+              const blend = Math.min(1, (18 - dist) / 10);
+              const tx = toPlayer.x * ca - toPlayer.z * sa;
+              const tz = toPlayer.x * sa + toPlayer.z * ca;
+              mx = (tx * blend + toPlayer.x * (1 - blend)) * spd * 1.25;
+              mz = (tz * blend + toPlayer.z * (1 - blend)) * spd * 1.25;
             } else {
-              mx = perp.x * spd * 1.3 + toPlayer.x * spd * 0.15;
-              mz = perp.z * spd * 1.3 + toPlayer.z * spd * 0.15;
+              mx = perp.x * spd * 1.3 + toPlayer.x * spd * 0.2;
+              mz = perp.z * spd * 1.3 + toPlayer.z * spd * 0.2;
             }
             break;
           }
           case 'charger': {
-            const boost = dist < 10 ? 2.0 : 1.0;
+            const boost = dist < 10 ? 2.0 : dist > 18 ? 1.55 : 1.15;
             mx = toPlayer.x * spd * boost;
             mz = toPlayer.z * spd * boost;
             break;
           }
           case 'tank': {
-            mx = toPlayer.x * spd * 0.75;
-            mz = toPlayer.z * spd * 0.75;
+            const boost = dist > 16 ? 1.35 : 1;
+            mx = toPlayer.x * spd * 0.75 * boost;
+            mz = toPlayer.z * spd * 0.75 * boost;
             break;
           }
           case 'erratic': {
             const zig = Math.sin((now - data.spawnTime) / 400) * 0.8;
-            mx = (toPlayer.x * 0.6 + perp.x * zig) * spd * 1.1;
-            mz = (toPlayer.z * 0.6 + perp.z * zig) * spd * 1.1;
+            const towardW = dist > 16 ? 0.92 : dist > 10 ? 0.78 : 0.6;
+            const sideW = 1 - towardW;
+            mx = (toPlayer.x * towardW + perp.x * zig * sideW) * spd * 1.2;
+            mz = (toPlayer.z * towardW + perp.z * zig * sideW) * spd * 1.2;
             break;
           }
           case 'jumper': {
             const bt = (now - data.spawnTime) / 1000;
             enemy.position.y = Math.sin(bt * 2.5) * 0.15;
-            enemy.rotation.z = Math.sin(bt * 8) * 0.03;
-            mx = toPlayer.x * spd * 0.8;
-            mz = toPlayer.z * spd * 0.8;
+            const boost = dist > 16 ? 1.35 : 1;
+            mx = toPlayer.x * spd * 0.95 * boost;
+            mz = toPlayer.z * spd * 0.95 * boost;
             break;
           }
           default: {
             const t = (now - data.spawnTime) / 1000;
-            const sway = Math.sin(t * 3 + data.swayOffset) * data.type.swayAmplitude * 0.2;
-            const boost = dist > 15 ? 1.5 : (dist > 10 ? 1.3 : 1.1);
-            mx = toPlayer.x * spd * boost + perp.x * sway * deltaTime * speedMult;
-            mz = toPlayer.z * spd * boost + perp.z * sway * deltaTime * speedMult;
+            const sway = Math.sin(t * 3 + data.swayOffset) * data.type.swayAmplitude;
+            const farBoost = 1 + Math.min(1.15, Math.max(0, dist - 8) * 0.045);
+            const sideMag = Math.min(0.22, 2.8 / Math.max(dist, 3)) * sway * spd;
+            mx = toPlayer.x * spd * farBoost + perp.x * sideMag;
+            mz = toPlayer.z * spd * farBoost + perp.z * sideMag;
             break;
           }
         }
@@ -551,9 +656,11 @@ export class EnemyManager {
       enemy.position.z = Math.max(-24, Math.min(24, enemy.position.z));
       if (enemy.position.y < 0 && !data.isLeaping) enemy.position.y = 0;
 
-      // ── Face player ──
-      enemy.lookAt(playerPosition.x, playerPosition.y, playerPosition.z);
-      enemy.rotation.y += (data.type.faceOffset ?? 0) * Math.PI / 180;
+      toPlayer.subVectors(playerPosition, enemy.position);
+      toPlayer.y = 0;
+      dist = toPlayer.length();
+
+      this.applyEnemyFaceYaw(enemy, data, toPlayer, dist, now);
 
       // ── Health bar billboard ──
       if (data.healthBar.visible) {
@@ -624,6 +731,13 @@ export class EnemyManager {
       if (!this.enemies[i].userData.isDead) count++;
     }
     return count;
+  }
+
+  /** True when no enemy meshes (incl. death animation) and no enemy shots remain. */
+  isWaveClearForCinematic() {
+    if (this.enemies.length > 0) return false;
+    if (this.enemyProjectiles.length > 0) return false;
+    return true;
   }
 
   activateSlowMotion(duration) {
