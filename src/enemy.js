@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { getSharedAudioContext } from './shared-audio.js';
 
 export class EnemyManager {
   constructor(scene, physicsWorld, opts = {}) {
@@ -63,9 +64,7 @@ export class EnemyManager {
   // ── Audio ──
 
   initAudio() {
-    try {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    } catch (e) {}
+    this.audioContext = getSharedAudioContext();
   }
 
   playDeathSound(isBoss = false) {

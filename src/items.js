@@ -3,6 +3,7 @@
  */
 
 import * as THREE from 'three';
+import { getSharedAudioContext } from './shared-audio.js';
 
 export class ItemManager {
   constructor(scene, opts = {}) {
@@ -58,9 +59,7 @@ export class ItemManager {
   }
   
   initAudio() {
-    try {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    } catch (e) {}
+    this.audioContext = getSharedAudioContext();
   }
   
   playCoinSound() {

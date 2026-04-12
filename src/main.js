@@ -17,6 +17,7 @@ import { DareBackupDancers } from './dare-backup-dancers.js';
 import { SpecialAttackController, SPECIAL_CHARGE_KILLS } from './special-attack.js';
 import { GameMusic } from './game-music.js';
 import { WaveClearCinematic } from './wave-clear-cinematic.js';
+import { resumeSharedAudioContext } from './shared-audio.js';
 
 class Game {
   constructor() {
@@ -29,7 +30,12 @@ class Game {
     this.screenShake = 0;
     this.clock = new THREE.Clock();
 
-    this.isMobile = ('ontouchstart' in window) && (window.innerWidth < 1200);
+    const touchCapable =
+      ('ontouchstart' in window) || (typeof navigator !== 'undefined' && (navigator.maxTouchPoints ?? 0) > 0);
+    const coarsePointer =
+      typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    const narrowViewport = typeof window !== 'undefined' && window.innerWidth < 1400;
+    this.isMobile = touchCapable && (coarsePointer || narrowViewport);
     const dm = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined;
     const hc = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined;
     this.isLowTierMobile =
@@ -83,7 +89,7 @@ class Game {
     const high = this.isHighEndMobile;
     return {
       maxPixelRatio: m
-        ? Math.min(1.75, low ? 1 : high ? 1.65 : 1.35)
+        ? Math.min(1.28, low ? 1 : high ? 1.18 : 1.08)
         : Math.min(1.75, window.devicePixelRatio || 1),
       powerPreference: m && low ? 'low-power' : 'high-performance',
       floorTextureSize: m ? (low ? 640 : 896) : 1024,
@@ -136,8 +142,10 @@ class Game {
       });
       this.ui.updateLoadingProgress('Warming enemy pool…');
       this.enemyManager.warmPool(this.perf.poolClonesPerModel);
-      this.ui.updateLoadingProgress('Pre-compiling shaders…');
-      this.enemyManager.prewarmSkinnedMaterials(this.renderer, this.camera);
+      if (!this.isMobile) {
+        this.ui.updateLoadingProgress('Pre-compiling shaders…');
+        this.enemyManager.prewarmSkinnedMaterials(this.renderer, this.camera);
+      }
       this.ui.updateLoadingProgress('Baking arena visuals…');
       await this.arena.prebakeLevelTexturesAsync();
       this.ui.updateLoadingProgress('Starting…');
@@ -147,14 +155,6 @@ class Game {
         this.specialAttack.preload().catch(() => {}),
         !this.isMobile ? this.waveClear.preload().catch(() => {}) : Promise.resolve()
       ]).catch(() => {});
-      if (this.isMobile) {
-        const kick = () => this.waveClear.preload().catch(() => {});
-        if (typeof requestIdleCallback === 'function') {
-          requestIdleCallback(() => kick(), { timeout: 8000 });
-        } else {
-          setTimeout(kick, 400);
-        }
-      }
     } catch (e) {
       console.warn('Model loading issue:', e);
     }
@@ -192,8 +192,13 @@ class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPR));
     this.renderer.shadowMap.enabled = false;
     this.renderer.autoClear = true;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.08;
+    if (this.isLowTierMobile) {
+      this.renderer.toneMapping = THREE.NoToneMapping;
+      this.renderer.toneMappingExposure = 1;
+    } else {
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.08;
+    }
     if ('outputColorSpace' in this.renderer) {
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     }
@@ -423,6 +428,18 @@ class Game {
     });
 
     window.addEventListener('resize', () => this.onWindowResize());
+
+    window.addEventListener(
+      'pageshow',
+      (e) => {
+        if (!e.persisted || !this.renderer) return;
+        const gl = this.renderer.getContext?.();
+        if (gl && typeof gl.isContextLost === 'function' && gl.isContextLost()) {
+          window.location.reload();
+        }
+      },
+      false
+    );
     document.getElementById('start-screen').addEventListener('click', () => this.startGame());
     document.getElementById('start-screen').addEventListener('touchend', (e) => {
       e.preventDefault();
@@ -559,6 +576,7 @@ class Game {
 
   restartRun() {
     if (!this.modelsReady) return;
+    resumeSharedAudioContext();
     this.deathSequenceActive = false;
     if (this.deathScene?.active) this.deathScene.stop();
 
@@ -745,6 +763,7 @@ class Game {
   startGame() {
     if (this.isRunning) return;
     if (!this.modelsReady) return;
+    resumeSharedAudioContext();
     this.restartRun();
   }
 

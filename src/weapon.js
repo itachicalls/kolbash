@@ -3,6 +3,7 @@
  */
 
 import * as THREE from 'three';
+import { getSharedAudioContext } from './shared-audio.js';
 
 export const WEAPON_DEFS = {
   disco: {
@@ -92,9 +93,7 @@ export class Weapon {
   }
 
   initAudio() {
-    try {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    } catch (e) {}
+    this.audioContext = getSharedAudioContext();
   }
 
   playShootSound(rapidFire = false) {

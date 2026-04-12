@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { LEVELS } from './arena.js';
+import { getSharedAudioContext } from './shared-audio.js';
 
 /** Campaign length: 6 arenas × 2 waves each, then victory. */
 export const TOTAL_WAVES = LEVELS.length * 2;
@@ -87,9 +88,7 @@ export class WaveManager {
   }
 
   initAudio() {
-    try {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    } catch (e) {}
+    this.audioContext = getSharedAudioContext();
   }
 
   playWaveStartSound() {
