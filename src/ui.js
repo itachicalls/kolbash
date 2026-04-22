@@ -112,6 +112,8 @@ export class UIManager {
     this.waveAnnouncementTimeout = null;
     this.levelEffectTimeout = null;
     this.crosshairEl = document.getElementById('crosshair');
+    /** Avoid stacking many `setTimeout` callbacks when coin text updates in bursts (mobile). */
+    this._coinBounceScheduled = false;
   }
 
   updateCrosshair(weapon) {
@@ -211,8 +213,17 @@ export class UIManager {
         this.elements.specialVortexOrb.classList.remove('special-vortex-ready');
       }
       if (this.elements.musicToggleBtn) this.elements.musicToggleBtn.style.display = 'none';
-    } else if (this.elements.musicToggleBtn) {
+    } else     if (this.elements.musicToggleBtn) {
       this.elements.musicToggleBtn.style.display = 'flex';
+    }
+
+    const startBgVideo = document.getElementById('start-bg-video');
+    if (startBgVideo) {
+      if (screen === 'start') {
+        void startBgVideo.play?.().catch(() => {});
+      } else {
+        startBgVideo.pause?.();
+      }
     }
   }
 
@@ -259,15 +270,20 @@ export class UIManager {
   }
 
   updateCoins(count) {
-    if (this.elements.coinCount) {
-      this.elements.coinCount.textContent = count.toLocaleString();
-      this.elements.coinCount.style.transform = 'scale(1.3)';
-      this.elements.coinCount.style.color = '#ffffff';
-      setTimeout(() => {
-        this.elements.coinCount.style.transform = 'scale(1)';
-        this.elements.coinCount.style.color = '#ffd700';
-      }, 150);
-    }
+    const el = this.elements.coinCount;
+    if (!el) return;
+    el.textContent = count.toLocaleString();
+    if (this._coinBounceScheduled) return;
+    this._coinBounceScheduled = true;
+    el.style.transform = 'scale(1.3)';
+    el.style.color = '#ffffff';
+    setTimeout(() => {
+      this._coinBounceScheduled = false;
+      if (el) {
+        el.style.transform = 'scale(1)';
+        el.style.color = '#ffd700';
+      }
+    }, 150);
   }
 
   updateScore(score) {

@@ -55,9 +55,11 @@ export class WaveManager {
 
     this.spawnRadiusMin = 12;
     this.spawnRadiusMax = 22;
-    this.spawnDelay = 400;
+    this.spawnDelay = opts.spawnDelay ?? 400;
     /** Tighter cadence for the first few waves (more bodies on the floor early). */
-    this.earlySpawnDelay = 300;
+    this.earlySpawnDelay = opts.earlySpawnDelay ?? 300;
+    /** Spawn gap after wave 4+ (defaults to 400). */
+    this.lateSpawnDelay = opts.lateSpawnDelay ?? 400;
     this.minSpawnSpacing = 3;
 
     this.spawnQueue = [];
@@ -226,7 +228,7 @@ export class WaveManager {
       requestAnimationFrame(() => this.playLevelChangeSound());
     }
 
-    this.spawnDelay = this.currentWave <= 4 ? this.earlySpawnDelay : 400;
+    this.spawnDelay = this.currentWave <= 4 ? this.earlySpawnDelay : this.lateSpawnDelay;
 
     const forwardDir = this._fwdScratch;
     forwardDir.set(0, 0, -1);
@@ -242,14 +244,11 @@ export class WaveManager {
 
     const bossIndex = (this.currentWave - 1) % 6;
     const bossDistance = 14 + Math.random() * 5;
-    const bossPos = new THREE.Vector3(
-      playerPosition.x + forwardDir.x * bossDistance,
-      0,
-      playerPosition.z + forwardDir.z * bossDistance
-    );
-    bossPos.x = Math.max(-23, Math.min(23, bossPos.x));
-    bossPos.z = Math.max(-23, Math.min(23, bossPos.z));
-    this.spawnQueue.push({ typeIndex: bossIndex, position: bossPos, isBoss: true });
+    let bx = playerPosition.x + forwardDir.x * bossDistance;
+    let bz = playerPosition.z + forwardDir.z * bossDistance;
+    bx = Math.max(-23, Math.min(23, bx));
+    bz = Math.max(-23, Math.min(23, bz));
+    this.spawnQueue.push({ typeIndex: bossIndex, position: { x: bx, y: 0, z: bz }, isBoss: true });
 
     const earlyExtra = this.currentWave <= 3 ? 1 : 0;
     const enemyCount = Math.min(
@@ -265,11 +264,11 @@ export class WaveManager {
       if (useCircle) {
         const angle = (i / enemyCount) * Math.PI * 2;
         const distance = this.spawnRadiusMin + Math.random() * 4;
-        spawnPos = new THREE.Vector3(
-          playerPosition.x + Math.cos(angle) * distance,
-          0,
-          playerPosition.z + Math.sin(angle) * distance
-        );
+        let sx = playerPosition.x + Math.cos(angle) * distance;
+        let sz = playerPosition.z + Math.sin(angle) * distance;
+        sx = Math.max(-23, Math.min(23, sx));
+        sz = Math.max(-23, Math.min(23, sz));
+        spawnPos = { x: sx, y: 0, z: sz };
       } else {
         const spreadAngle = Math.PI * 1.4;
         const angleOffset = ((i / (enemyCount - 1 || 1)) - 0.5) * spreadAngle;
@@ -284,15 +283,12 @@ export class WaveManager {
         const jitter = (Math.random() - 0.5) * Math.PI * 0.3;
         spawnDir.applyAxisAngle(this._yAxis, jitter);
 
-        spawnPos = new THREE.Vector3(
-          playerPosition.x + spawnDir.x * distance,
-          0,
-          playerPosition.z + spawnDir.z * distance
-        );
+        let sx = playerPosition.x + spawnDir.x * distance;
+        let sz = playerPosition.z + spawnDir.z * distance;
+        sx = Math.max(-23, Math.min(23, sx));
+        sz = Math.max(-23, Math.min(23, sz));
+        spawnPos = { x: sx, y: 0, z: sz };
       }
-
-      spawnPos.x = Math.max(-23, Math.min(23, spawnPos.x));
-      spawnPos.z = Math.max(-23, Math.min(23, spawnPos.z));
 
       this.enforceSpacing(spawnPos, this.spawnQueue);
 

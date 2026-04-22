@@ -8,8 +8,18 @@ import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 export const SPECIAL_CHARGE_KILLS = 11;
 
-const MODEL_PATH = '/models/special/NorthernSoulSpin.fbx';
+export const DEFAULT_SPECIAL_MODEL = '/models/special/NorthernSoulSpin.fbx';
 const TARGET_HEIGHT = 1.65;
+
+function disposeModelGraph(root) {
+  root.traverse((obj) => {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach((m) => m.dispose?.());
+    }
+  });
+}
 
 const RADIAL_INTERVAL = 0.14;
 const RADIAL_RADIUS = 8.5;
@@ -71,6 +81,8 @@ function pickClip(animations) {
     let score = skelTrackScore(a) * 3;
     if (n.includes('take')) score += 25;
     if (n.includes('spin') || n.includes('soul') || n.includes('northern')) score += 40;
+    if (n.includes('gangnam') || n.includes('style')) score += 42;
+    if (n.includes('thriller')) score += 44;
     if (n.includes('dance') || n.includes('combo')) score += 12;
     return { a, score };
   });
@@ -81,13 +93,19 @@ function pickClip(animations) {
 export class SpecialAttackController {
   /**
    * @param {THREE.Scene} scene
-   * @param {{ maxOrbs?: number; lightMode?: boolean }} [opts] lightMode throttles burst work per frame (mobile).
+   * @param {{ maxOrbs?: number; lightMode?: boolean; lowTierSpecial?: boolean }} [opts]
+   *   lightMode throttles burst work per frame (mobile).
+   *   lowTierSpecial: same hero FBX + vortex look; shared orb GPU buffers + slightly lighter sphere mesh.
+   *   skipHeroFbx: no NorthernSoul FBX — cheap placeholder mesh + vortex only (mobile tab survival).
    */
   constructor(scene, opts = {}) {
     this.scene = scene;
+    this._skipHeroFbx = opts.skipHeroFbx === true;
     this.loader = new FBXLoader();
     this.cache = null;
     this.loading = null;
+    /** Third-person special dance FBX — swapped per selected fighter. */
+    this._modelPath = DEFAULT_SPECIAL_MODEL;
 
     this.active = false;
     this.heroGroup = new THREE.Group();
@@ -106,12 +124,34 @@ export class SpecialAttackController {
     this.orbs = [];
     this.orbPool = [];
     this._lightMode = opts.lightMode === true;
+    this._lowTierSpecial = opts.lowTierSpecial === true;
     const cap = opts.maxOrbs ?? 90;
-    const minOrbs = this._lightMode ? 6 : 16;
+    const minOrbs = this._lowTierSpecial ? 4 : this._lightMode ? 5 : 16;
     this.maxOrbs = Math.max(minOrbs, Math.min(120, cap));
-    this._radialBurstCap = this._lightMode ? 4 : 14;
-    this._spawnBurstCap = this._lightMode ? 5 : 16;
-    this._orbSpawnMul = this._lightMode ? 0.5 : 1;
+    if (!this._lightMode) {
+      this._radialBurstCap = 14;
+      this._spawnBurstCap = 16;
+      this._orbSpawnMul = 1;
+    } else if (this._lowTierSpecial) {
+      this._radialBurstCap = 2;
+      this._spawnBurstCap = 3;
+      this._orbSpawnMul = 0.32;
+    } else {
+      this._radialBurstCap = 3;
+      this._spawnBurstCap = 5;
+      this._orbSpawnMul = 0.4;
+    }
+
+    const ow = this._lowTierSpecial ? 4 : 6;
+    const oh = this._lowTierSpecial ? 4 : 5;
+    this._orbSharedGeo = new THREE.SphereGeometry(0.11, ow, oh);
+    this._orbSharedMat = new THREE.MeshBasicMaterial({
+      color: 0xff00cc,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
 
     this._forward = new THREE.Vector3();
     this._camPos = new THREE.Vector3();
@@ -120,6 +160,47 @@ export class SpecialAttackController {
     this.onDamage = null;
     this.onEnd = null;
     this.enemyManager = null;
+
+    /** Reuse one hero FBX clone between specials to avoid repeated clone/dispose GPU churn. */
+    this._heroModelPool = [];
+    /** Mobile: run clone / scene.add / mixer on separate frames (see `update`). */
+    this._bootQueue = null;
+  }
+
+  _invalidateHeroCache() {
+    if (this.loading) {
+      this.loading.catch(() => {});
+      this.loading = null;
+    }
+    if (this.cache?.fbx) {
+      try {
+        disposeModelGraph(this.cache.fbx);
+      } catch (e) {}
+      this.cache = null;
+    }
+    while (this._heroModelPool.length) {
+      const m = this._heroModelPool.pop();
+      if (m) {
+        try {
+          disposeModelGraph(m);
+        } catch (e) {}
+      }
+    }
+  }
+
+  /**
+   * @param {string} path e.g. `/models/characters/timmy/special/gangnam-style.fbx`
+   */
+  async setModelPath(path) {
+    const next = String(path || '').trim() || DEFAULT_SPECIAL_MODEL;
+    if (next === this._modelPath && this.cache) return;
+    if (this.loading) {
+      try {
+        await this.loading;
+      } catch (e) {}
+    }
+    this._invalidateHeroCache();
+    this._modelPath = next;
   }
 
   canStart() {
@@ -130,9 +211,16 @@ export class SpecialAttackController {
     if (this.cache) return Promise.resolve(this.cache);
     if (this.loading) return this.loading;
 
+    if (this._skipHeroFbx) {
+      this.cache = { fbx: null, originalHeight: TARGET_HEIGHT, animations: [] };
+      this.loading = null;
+      return Promise.resolve(this.cache);
+    }
+
+    const url = this._modelPath;
     this.loading = new Promise((resolve, reject) => {
       this.loader.load(
-        MODEL_PATH,
+        url,
         (fbx) => {
           fbx.updateMatrixWorld(true);
           const animations = collectAnimations(fbx);
@@ -140,12 +228,23 @@ export class SpecialAttackController {
           const size = box.getSize(new THREE.Vector3());
           this.cache = { fbx, originalHeight: size.y || 1, animations };
           this.loading = null;
+          // Mobile (`lightMode`): pre-clone once at load so the first special tap never pays
+          // a synchronous SkeletonUtils.clone on the input frame (iOS tab reload).
+          if (this._lightMode && this._heroModelPool.length < 1) {
+            try {
+              const warm = SkeletonUtils.clone(this.cache.fbx);
+              warm.updateMatrixWorld(true);
+              this._heroModelPool.push(warm);
+            } catch (e) {
+              console.warn('SpecialAttack: hero prewarm clone failed', e);
+            }
+          }
           resolve(this.cache);
         },
         undefined,
         (err) => {
           this.loading = null;
-          console.warn('SpecialAttack: failed to load', MODEL_PATH, err);
+          console.warn('SpecialAttack: failed to load', url, err);
           reject(err);
         }
       );
@@ -153,27 +252,26 @@ export class SpecialAttackController {
     return this.loading;
   }
 
-  _ensureOrbPool() {
-    while (this.orbPool.length < this.maxOrbs) {
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.11, 6, 5),
-        new THREE.MeshBasicMaterial({
-          color: 0xff00cc,
-          transparent: true,
-          opacity: 0.92,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
-        })
-      );
+  /** Grow orb pool by at most `maxAdds` meshes (mobile spreads work across frames). */
+  _growOrbPool(maxAdds = 1024) {
+    let added = 0;
+    while (this.orbPool.length < this.maxOrbs && added < maxAdds) {
+      const mesh = new THREE.Mesh(this._orbSharedGeo, this._orbSharedMat);
       mesh.visible = false;
       mesh.userData = { active: false, life: 0, vx: 0, vy: 0, vz: 0, hitIds: null };
       this.scene.add(mesh);
       this.orbPool.push(mesh);
+      added++;
     }
+  }
+
+  _ensureOrbPool() {
+    this._growOrbPool(1024);
   }
 
   start(lockYaw, enemyManager, callbacks) {
     if (!this.cache || this.active) return;
+    this._bootQueue = null;
     this.enemyManager = enemyManager;
     this.onDamage = callbacks.onDamage;
     this.onEnd = callbacks.onEnd;
@@ -185,36 +283,96 @@ export class SpecialAttackController {
     this.emitRing = 0;
     this.active = true;
 
-    this.cache.fbx.updateMatrixWorld(true);
-    this.heroModel = SkeletonUtils.clone(this.cache.fbx);
-    this.heroModel.updateMatrixWorld(true);
-    const scale = TARGET_HEIGHT / (this.cache.originalHeight || 1);
-    this.heroModel.scale.setScalar(scale);
-    const box = new THREE.Box3().setFromObject(this.heroModel);
-    this.heroModel.position.set(0, -box.min.y, 0);
-    this.heroModel.rotation.y = Math.PI;
-
     this.heroGroup.rotation.y = this.lockYaw;
-    this.heroGroup.add(this.heroModel);
-    this.scene.add(this.heroGroup);
 
-    const clip = pickClip(this.cache.animations);
-    if (clip) {
-      this.mixer = new THREE.AnimationMixer(this.heroModel);
-      this.action = this.mixer.clipAction(clip);
-      this.action.reset();
-      this.action.setLoop(THREE.LoopOnce, 1);
-      this.action.clampWhenFinished = true;
-      this.action.enabled = true;
-      this.action.setEffectiveWeight(1);
-      this.action.play();
-      this.mixer.update(0.001);
-      this.clipDuration = Math.min(Math.max(clip.duration, 2.2), 9);
+    if (!this.cache.fbx) {
+      const geo = new THREE.CylinderGeometry(0.32, 0.4, 1.15, 8, 1);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xff22aa,
+        transparent: true,
+        opacity: 0.95
+      });
+      this.heroModel = new THREE.Mesh(geo, mat);
+      this.heroModel.position.y = 0.58;
+      this.heroModel.rotation.y = Math.PI;
+      this.heroGroup.add(this.heroModel);
+      this.scene.add(this.heroGroup);
+      this.mixer = null;
+      this.action = null;
+      this.clipDuration = 3.85;
+    } else if (this._lightMode) {
+      this._bootQueue = [
+        () => {
+          this.heroModel = this._heroModelPool.length
+            ? this._heroModelPool.pop()
+            : SkeletonUtils.clone(this.cache.fbx);
+          this.heroModel.updateMatrixWorld(true);
+          const scale = TARGET_HEIGHT / (this.cache.originalHeight || 1);
+          this.heroModel.scale.setScalar(scale);
+          const box = new THREE.Box3().setFromObject(this.heroModel);
+          this.heroModel.position.set(0, -box.min.y, 0);
+          this.heroModel.rotation.y = Math.PI;
+        },
+        () => {
+          this.heroGroup.add(this.heroModel);
+          this.scene.add(this.heroGroup);
+        },
+        () => {
+          const clip = pickClip(this.cache.animations);
+          if (clip) {
+            this.mixer = new THREE.AnimationMixer(this.heroModel);
+            this.action = this.mixer.clipAction(clip);
+            this.action.reset();
+            this.action.setLoop(THREE.LoopOnce, 1);
+            this.action.clampWhenFinished = true;
+            this.action.enabled = true;
+            this.action.setEffectiveWeight(1);
+            this.action.play();
+            this.mixer.update(0.001);
+            this.clipDuration = Math.min(Math.max(clip.duration, 2.2), 9);
+          } else {
+            this.clipDuration = 4;
+          }
+        },
+        () => {
+          this._growOrbPool(this._lowTierSpecial ? 2 : 2);
+        }
+      ];
     } else {
-      this.clipDuration = 4;
+      this.cache.fbx.updateMatrixWorld(true);
+      this.heroModel = this._heroModelPool.length
+        ? this._heroModelPool.pop()
+        : SkeletonUtils.clone(this.cache.fbx);
+      this.heroModel.updateMatrixWorld(true);
+      const scale = TARGET_HEIGHT / (this.cache.originalHeight || 1);
+      this.heroModel.scale.setScalar(scale);
+      const box = new THREE.Box3().setFromObject(this.heroModel);
+      this.heroModel.position.set(0, -box.min.y, 0);
+      this.heroModel.rotation.y = Math.PI;
+
+      this.heroGroup.add(this.heroModel);
+      this.scene.add(this.heroGroup);
+
+      const clip = pickClip(this.cache.animations);
+      if (clip) {
+        this.mixer = new THREE.AnimationMixer(this.heroModel);
+        this.action = this.mixer.clipAction(clip);
+        this.action.reset();
+        this.action.setLoop(THREE.LoopOnce, 1);
+        this.action.clampWhenFinished = true;
+        this.action.enabled = true;
+        this.action.setEffectiveWeight(1);
+        this.action.play();
+        this.mixer.update(0.001);
+        this.clipDuration = Math.min(Math.max(clip.duration, 2.2), 9);
+      } else {
+        this.clipDuration = 4;
+      }
     }
 
-    this._ensureOrbPool();
+    if (!this._lightMode) {
+      this._ensureOrbPool();
+    }
   }
 
   _spawnOrb(px, py, pz, dirx, diry, dirz) {
@@ -226,7 +384,13 @@ export class SpecialAttackController {
     mesh.userData.vx = (dirx / len) * ORB_SPEED;
     mesh.userData.vy = (diry / len) * ORB_SPEED;
     mesh.userData.vz = (dirz / len) * ORB_SPEED;
-    mesh.userData.hitIds = new Set();
+    let hid = mesh.userData.hitIds;
+    if (!hid) {
+      hid = new Set();
+      mesh.userData.hitIds = hid;
+    } else {
+      hid.clear();
+    }
     mesh.position.set(px, py, pz);
     mesh.visible = true;
     this.orbs.push(mesh);
@@ -250,7 +414,7 @@ export class SpecialAttackController {
           const dz = enemy.position.z - m.position.z;
           if (dx * dx + dz * dz < ORB_HIT_RADIUS * ORB_HIT_RADIUS && Math.abs(dy) < 1.8) {
             u.hitIds.add(enemy.uuid);
-            this.enemyManager.damageEnemy(enemy, ORB_DAMAGE);
+            this.enemyManager.damageEnemy(enemy, ORB_DAMAGE, this._lightMode ? { skipFlash: true } : undefined);
             this.onDamage?.(ORB_DAMAGE);
             u.life = 0;
             break;
@@ -276,7 +440,7 @@ export class SpecialAttackController {
       if (d < RADIAL_RADIUS) {
         const fall = 1 - d / RADIAL_RADIUS;
         const dmg = Math.round(RADIAL_DAMAGE * (0.45 + fall * 0.55));
-        this.enemyManager.damageEnemy(enemy, dmg);
+        this.enemyManager.damageEnemy(enemy, dmg, this._lightMode ? { skipFlash: true } : undefined);
         this.onDamage?.(dmg);
       }
     }
@@ -295,11 +459,30 @@ export class SpecialAttackController {
   update(delta, player, camera) {
     if (!this.active) return;
 
+    if (this._bootQueue?.length) {
+      const job = this._bootQueue.shift();
+      try {
+        job();
+      } catch (e) {
+        console.warn('SpecialAttack boot step', e);
+      }
+      if (this._bootQueue.length === 0) this._bootQueue = null;
+      return;
+    }
+
+    if (this._lightMode && this.orbPool.length < this.maxOrbs) {
+      this._growOrbPool(this._lowTierSpecial ? 3 : 4);
+    }
+
     const px = player.body.position.x;
     const py = player.body.position.y;
     const pz = player.body.position.z;
 
     this.heroGroup.position.set(px, py, pz);
+
+    if (!this.cache?.fbx && this.heroModel) {
+      this.heroModel.rotation.y += delta * 2.4;
+    }
 
     if (this.mixer) this.mixer.update(delta);
     this.elapsed += delta;
@@ -350,13 +533,23 @@ export class SpecialAttackController {
 
     if (this.heroModel) {
       this.heroGroup.remove(this.heroModel);
-      this.heroModel.traverse((obj) => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-          mats.forEach((m) => m.dispose?.());
-        }
-      });
+      if (this._skipHeroFbx) {
+        this.heroModel.geometry?.dispose();
+        const mats = Array.isArray(this.heroModel.material)
+          ? this.heroModel.material
+          : [this.heroModel.material];
+        mats.forEach((m) => m?.dispose?.());
+      } else if (this._heroModelPool.length < 1) {
+        this._heroModelPool.push(this.heroModel);
+      } else {
+        this.heroModel.traverse((obj) => {
+          if (obj.geometry) obj.geometry.dispose();
+          if (obj.material) {
+            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+            mats.forEach((m) => m.dispose?.());
+          }
+        });
+      }
       this.heroModel = null;
     }
     if (this.heroGroup.parent) this.scene.remove(this.heroGroup);
@@ -370,5 +563,6 @@ export class SpecialAttackController {
     this.onDamage = null;
     this.onEnd = null;
     this.enemyManager = null;
+    this._bootQueue = null;
   }
 }

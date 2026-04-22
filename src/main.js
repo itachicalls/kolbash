@@ -14,11 +14,73 @@ import { UIManager, STORE_ITEMS } from './ui.js';
 import { Arena, LEVELS } from './arena.js';
 import { DeathScene } from './death-scene.js';
 import { DareBackupDancers } from './dare-backup-dancers.js';
-import { SpecialAttackController, SPECIAL_CHARGE_KILLS } from './special-attack.js';
+import { SpecialAttackController, SPECIAL_CHARGE_KILLS, DEFAULT_SPECIAL_MODEL } from './special-attack.js';
 import { GameMusic } from './game-music.js';
 import { WaveClearCinematic } from './wave-clear-cinematic.js';
 import { resumeSharedAudioContext } from './shared-audio.js';
 import { attachMobileDebug } from './mobile-debug.js';
+import { CharacterSelectController } from './character-select.js';
+import { CharacterProfilePreview } from './character-profile-preview.js';
+import { firstPlayableCharacterId, getCharacter } from './characters.js';
+
+// #region agent log
+/** Off by default — agent logging does two fetch() + sessionStorage per event (bad on mobile WebKit). Enable with ?agentdebug=1 or localStorage kolbash_debug_agent=1 */
+function _agentLogEnabled() {
+  try {
+    if (typeof window === 'undefined' || !window.location) return false;
+    const q = new URLSearchParams(window.location.search);
+    if (q.get('agentdebug') === '1') return true;
+    return window.localStorage?.getItem('kolbash_debug_agent') === '1';
+  } catch (e) {
+    return false;
+  }
+}
+function _agentIngestUrl() {
+  try {
+    const h = typeof window !== 'undefined' && window.location?.hostname;
+    if (h && h !== '127.0.0.1' && h !== 'localhost') {
+      return `http://${h}:7334/ingest/ba5b9fd7-2887-44ab-9059-b67c504f3752`;
+    }
+  } catch (e) {}
+  return 'http://127.0.0.1:7334/ingest/ba5b9fd7-2887-44ab-9059-b67c504f3752';
+}
+function _agentLog(location, message, data, hypothesisId, runId) {
+  if (!_agentLogEnabled()) return;
+  const payload = {
+    sessionId: '8b5196',
+    location,
+    message,
+    data: data || {},
+    timestamp: Date.now(),
+    hypothesisId: hypothesisId || '',
+    runId: runId || 'pre'
+  };
+  try {
+    const key = 'kolbash_agent_debug_8b5196';
+    const raw = sessionStorage.getItem(key);
+    let arr = [];
+    try {
+      const o = JSON.parse(raw || '[]');
+      if (Array.isArray(o)) arr = o;
+    } catch (e2) {}
+    arr.push(payload);
+    while (arr.length > 120) arr.shift();
+    sessionStorage.setItem(key, JSON.stringify(arr));
+  } catch (e) {}
+  const line = JSON.stringify(payload);
+  // Same-origin: Vite middleware writes workspace debug-8b5196.log (works from phone on LAN).
+  fetch('/__agent-debug', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '8b5196' },
+    body: line
+  }).catch(() => {});
+  fetch(_agentIngestUrl(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '8b5196' },
+    body: line
+  }).catch(() => {});
+}
+// #endregion
 
 class Game {
   constructor() {
@@ -53,6 +115,11 @@ class Game {
     this._allyShipTemplate = null;
     this.allyBoltGeo = null;
     this.allyBoltMat = null;
+    /** Recycled meshes for ally shots — avoids `new Mesh` per bolt (GC on mobile). */
+    this._allyBoltPool = [];
+    this._allyDirScratch = new THREE.Vector3();
+    /** Desktop yaw from quaternion without allocating each aim/special. */
+    this._yawEulerScratch = new THREE.Euler(0, 0, 0, 'YXZ');
     this.gameMusic = null;
     this.allyShipDuration = 18000;
     this.allyDurUpgrades = 0;
@@ -71,6 +138,8 @@ class Game {
     this.specialReady = false;
 
     this._waveCountdownRunning = false;
+    /** Incremented on restart so in-flight countdown async cannot release the wrong wave. */
+    this._waveCountdownSerial = 0;
     /** Blocks double resume from touch + synthetic click on dare / store close. */
     this._overlayResumeBusy = false;
 
@@ -83,8 +152,102 @@ class Game {
     this._glContextLost = false;
     /** Throttles rapid special taps while not charged (avoids iOS jank / audio spikes). */
     this._lastSpecialRejectMs = 0;
+    /** @type {{ yaw: number; callbacks: object } | null} — flushed at start of `animate()` so special never starts mid–rAF stack. */
+    this._pendingSpecialStart = null;
     /** @type {ReturnType<typeof attachMobileDebug>} */
     this._mobileDbg = null;
+
+    /** Mobile: coalesce rapid orientation/address-bar resize to avoid GL buffer realloc storms. */
+    this._resizeDebounceT = null;
+    this._lastResizeW = -1;
+    this._lastResizeH = -1;
+    this._lastResizePR = -1;
+
+    /** Title-screen roster choice; cinematics will follow this id when extra fighters ship. */
+    this.selectedCharacterId = firstPlayableCharacterId();
+    /** @type {CharacterSelectController | null} */
+    this._characterSelect = null;
+    /** @type {CharacterProfilePreview | null} */
+    this.profilePreview = null;
+    /** Which fighter's death / wave-clear / dare FBX set is currently resident in GPU caches. */
+    this._cinematicReadyForId = null;
+    /** @type {Promise<void> | null} */
+    this._cinematicEnsurePromise = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this._cinematicEnsureDebounce = null;
+  }
+
+  isCinematicReadyForSelection() {
+    const ch = getCharacter(this.selectedCharacterId);
+    if (!ch.playable || !ch.cinematic) return true;
+    return this._cinematicReadyForId === this.selectedCharacterId;
+  }
+
+  scheduleCinematicPreloadForSelection() {
+    if (this._cinematicEnsureDebounce) clearTimeout(this._cinematicEnsureDebounce);
+    this._cinematicEnsureDebounce = setTimeout(() => {
+      this._cinematicEnsureDebounce = null;
+      void this.ensureCinematicsForSelection();
+    }, 70);
+  }
+
+  /**
+   * Loads only the selected fighter's death, wave-clear, and dare-hero FBX (purges the previous fighter's clips).
+   */
+  async ensureCinematicsForSelection() {
+    const targetId = this.selectedCharacterId;
+    const ch = getCharacter(targetId);
+
+    if (!ch.playable || !ch.cinematic) {
+      this._cinematicReadyForId = targetId;
+      this._characterSelect?.refreshStartButton();
+      return;
+    }
+
+    if (this._cinematicReadyForId === targetId) {
+      this._characterSelect?.refreshStartButton();
+      return;
+    }
+
+    if (this._cinematicEnsurePromise) {
+      try {
+        await this._cinematicEnsurePromise;
+      } catch (e) {}
+      if (this._cinematicReadyForId === targetId) {
+        this._characterSelect?.refreshStartButton();
+        return;
+      }
+    }
+
+    this._characterSelect?.refreshStartButton();
+
+    const c = ch.cinematic;
+    this._cinematicEnsurePromise = (async () => {
+      try {
+        await this.deathScene.setModelPath(c.deathModel);
+        await this.deathScene.preload().catch(() => {});
+        this.waveClear.setWavePaths(c.waveClearModels);
+        await this.waveClear.preload(this.isMobile ? { serial: true } : {}).catch(() => {});
+        this.dareDancers.setHeroPath(c.dareHeroModel);
+        await this.dareDancers.preload(this.isMobile ? { serial: true } : {}).catch(() => {});
+        const sp = ch.specialAttackModel || DEFAULT_SPECIAL_MODEL;
+        await this.specialAttack.setModelPath(sp);
+        await this.specialAttack.preload().catch(() => {});
+        if (this.selectedCharacterId === targetId) {
+          this._cinematicReadyForId = targetId;
+        } else {
+          void this.ensureCinematicsForSelection();
+        }
+      } catch (e) {
+        console.warn('ensureCinematicsForSelection failed', e);
+        if (this.selectedCharacterId === targetId) this._cinematicReadyForId = null;
+      } finally {
+        this._cinematicEnsurePromise = null;
+        this._characterSelect?.refreshStartButton();
+      }
+    })();
+
+    await this._cinematicEnsurePromise;
   }
 
   _buildPerfProfile() {
@@ -95,23 +258,28 @@ class Game {
       maxPixelRatio: m ? 1 : Math.min(1.75, window.devicePixelRatio || 1),
       /** Prefer integrated/low-power GPU path on phones to reduce driver OOM / context loss. */
       powerPreference: m ? 'low-power' : 'high-performance',
-      /** Small canvases = less GPU RAM; sync bakes stay under jank budgets. */
-      floorTextureSize: m ? (low ? 256 : 288) : 1024,
-      wallDecalWidth: m ? (low ? 224 : 256) : 512,
-      wallDecalHeight: m ? (low ? 112 : 128) : 256,
+      /**
+       * Procedural arena CanvasTextures (see arena.js). Keep ≤512 on phone GPUs; FBX maps in /public/models
+       * must be re-exported small in Blender — Three does not downscale embedded textures automatically.
+       */
+      floorTextureSize: m ? 256 : 1024,
+      wallDecalWidth: m ? 224 : 512,
+      wallDecalHeight: m ? 112 : 256,
       floorAnisotropy: m ? 1 : 12,
       maxPlayerProjectiles: m ? (low ? 4 : 5) : 34,
       maxEnemyProjectiles: m ? 2 : 10,
-      maxEnemiesPerWave: m ? (low ? 4 : 5) : 16,
+      /** Fewer simultaneous skinned rigs = fewer mixers + GPU skinning passes (WebKit tab survival). */
+      maxEnemiesPerWave: m ? 3 : 16,
       cylinderSegments: m ? (low ? 4 : 5) : 8,
+      /** Mobile: 2 warmed clones/type after serial load — enough variety without VRAM like desktop×3. */
       poolClonesPerModel: m ? 1 : 3,
       maxShootersPerWave: m ? 1 : 3,
-      maxCoinsAlive: m ? (low ? 14 : 18) : 110,
+      maxCoinsAlive: m ? (low ? 12 : 14) : 110,
       maxPowerupsAlive: m ? 2 : 10,
       allyBoltGeometryDetail: m ? 0 : 1,
       frameDeltaCap: m ? 0.048 : 0.06,
       /** Fewer GPU particles for disco special (mobile). */
-      specialMaxOrbs: m ? (low ? 8 : 12) : 90
+      specialMaxOrbs: m ? (low ? 6 : 10) : 90
     };
   }
 
@@ -158,57 +326,51 @@ class Game {
 
     this.ui.onSpecialActivate = () => this.trySpecialAttack();
 
-    const btn = document.querySelector('#start-screen .start-btn');
-    if (btn) {
-      btn.textContent = 'LOADING…';
-      btn.style.opacity = '0.5';
-      btn.style.cursor = 'wait';
-    }
-
     try {
       this.ui.updateLoadingProgress('Loading character models…');
       await this.preloadModels((done, total) => {
         this.ui.updateLoadingProgress(`Models ${done} / ${total}`);
       });
+      if (this.isMobile) await new Promise((r) => requestAnimationFrame(r));
       this.ui.updateLoadingProgress('Warming enemy pool…');
-      this.enemyManager.warmPool(this.perf.poolClonesPerModel);
+      {
+        const warmTarget = this.isMobile ? this.enemyManager.poolReplenishTo : this.perf.poolClonesPerModel;
+        this.enemyManager.warmPool(warmTarget);
+      }
       if (!this.isMobile) {
         this.ui.updateLoadingProgress('Pre-compiling shaders…');
         this.enemyManager.prewarmSkinnedMaterials(this.renderer, this.camera);
       }
       this.ui.updateLoadingProgress('Baking arena visuals…');
-      if (this.isMobile) {
-        await this.arena.prebakeLevelTexturesAsync({ onlyLevels: [0] });
-        this.arena.prebakeLevelTexturesAsync().catch(() => {});
-      } else {
+      if (!this.isMobile) {
         await this.arena.prebakeLevelTexturesAsync();
       }
       this.ui.updateLoadingProgress('Starting…');
-      if (this.isMobile) {
-        await this.deathScene.preload().catch(() => {});
-        await new Promise((r) => requestAnimationFrame(r));
-        await this.waveClear.preload({ serial: true }).catch(() => {});
-        await new Promise((r) => requestAnimationFrame(r));
-        await this.specialAttack.preload().catch(() => {});
-      } else {
-        await Promise.all([
-          this.deathScene.preload().catch(() => {}),
-          this.dareDancers.preload().catch(() => {}),
-          this.specialAttack.preload().catch(() => {}),
-          this.waveClear.preload().catch(() => {})
-        ]).catch(() => {});
-      }
+      await this.ensureCinematicsForSelection();
+      if (this.isMobile) await new Promise((r) => requestAnimationFrame(r));
     } catch (e) {
       console.warn('Model loading issue:', e);
     }
 
     this.modelsReady = true;
+    // #region agent log
+    _agentLog(
+      'main.js:init',
+      'boot_complete',
+      {
+        isMobile: this.isMobile,
+        isLowTierMobile: this.isLowTierMobile,
+        maxPixelRatio: this.perf?.maxPixelRatio,
+        floorTextureSize: this.perf?.floorTextureSize,
+        glLost: this._glContextLost
+      },
+      'F',
+      'pre'
+    );
+    // #endregion
     this.ui.showStartScreen();
-    if (btn) {
-      btn.textContent = this.isMobile ? 'TAP TO PLAY' : 'ENTER THE FLOOR';
-      btn.style.opacity = '1';
-      btn.style.cursor = 'pointer';
-    }
+    this._characterSelect?.refreshStartButton();
+    this._characterSelect?.relayout();
 
     if (this.isMobile) {
       document.getElementById('mobile-controls')?.style.setProperty('display', 'block');
@@ -255,12 +417,24 @@ class Game {
     if ('outputColorSpace' in this.renderer) {
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     }
+    if (this.isMobile) {
+      this.renderer.sortObjects = false;
+    }
 
     const canvas = this.renderer.domElement;
     canvas.addEventListener(
       'webglcontextlost',
       (e) => {
         e.preventDefault();
+        // #region agent log
+        _agentLog(
+          'main.js:webglcontextlost',
+          'context_lost',
+          { statusMessage: e.statusMessage || '' },
+          'A',
+          'pre'
+        );
+        // #endregion
         this._glContextLost = true;
         this.isRunning = false;
         this.clock.stop();
@@ -273,6 +447,15 @@ class Game {
           this.specialAttack?.stop();
           this.specialAttackActive = false;
         } catch (err) {}
+      },
+      false
+    );
+    canvas.addEventListener(
+      'webglcontextrestored',
+      () => {
+        // #region agent log
+        _agentLog('main.js:webglcontextrestored', 'context_restored', {}, 'A', 'pre');
+        // #endregion
       },
       false
     );
@@ -292,14 +475,15 @@ class Game {
         });
     this.createLighting();
 
-    this.deathScene = new DeathScene();
+    this.deathScene = new DeathScene({ deferSkinned: this.isMobile });
     this.dareDancers = new DareBackupDancers({ useWebGlRenderer: !this.isMobile });
     this.specialAttack = new SpecialAttackController(this.scene, {
       maxOrbs: this.perf.specialMaxOrbs ?? (this.isMobile ? 12 : 90),
-      lightMode: this.isMobile
+      lightMode: this.isMobile,
+      lowTierSpecial: this.isLowTierMobile
     });
     this.gameMusic = new GameMusic();
-    this.waveClear = new WaveClearCinematic(this.scene, this.camera);
+    this.waveClear = new WaveClearCinematic(this.scene, this.camera, { deferSkinned: this.isMobile });
     this._buildAllyShipTemplate();
   }
 
@@ -310,6 +494,18 @@ class Game {
   _buildAllyShipTemplate() {
     if (this._allyShipTemplate) return;
     const ship = new THREE.Group();
+    const low = this.isLowTierMobile;
+    const hullSeg = this.isMobile ? (low ? 10 : 16) : 28;
+    const rimT = this.isMobile ? (low ? 6 : 8) : 10;
+    const rimP = this.isMobile ? (low ? 20 : 32) : 52;
+    const domeSeg = this.isMobile ? (low ? 10 : 14) : 18;
+    const domeRings = this.isMobile ? (low ? 8 : 10) : 12;
+    const innerT = this.isMobile ? (low ? 4 : 5) : 6;
+    const innerP = this.isMobile ? (low ? 16 : 22) : 28;
+    const navCount = this.isMobile ? (low ? 3 : 4) : 6;
+    const beamSeg = this.isMobile ? (low ? 6 : 8) : 10;
+    const glowSeg = this.isMobile ? (low ? 6 : 6) : 8;
+    const glowRings = this.isMobile ? (low ? 4 : 5) : 6;
 
     const hullMat = new THREE.MeshStandardMaterial({
       color: 0x1a3048,
@@ -318,7 +514,7 @@ class Game {
       emissive: 0x003840,
       emissiveIntensity: this.isMobile ? 0.55 : 0.32
     });
-    const hullGeo = new THREE.CylinderGeometry(0.52, 0.76, 0.15, 28, 1);
+    const hullGeo = new THREE.CylinderGeometry(0.52, 0.76, 0.15, hullSeg, 1);
     ship.add(new THREE.Mesh(hullGeo, hullMat));
 
     const rimMat = new THREE.MeshStandardMaterial({
@@ -328,7 +524,7 @@ class Game {
       emissive: 0x00ffaa,
       emissiveIntensity: this.isMobile ? 0.72 : 0.55
     });
-    const rimGeo = new THREE.TorusGeometry(0.66, 0.042, 10, 52);
+    const rimGeo = new THREE.TorusGeometry(0.66, 0.042, rimT, rimP);
     const rim = new THREE.Mesh(rimGeo, rimMat);
     rim.name = 'allyRim';
     rim.rotation.x = Math.PI / 2;
@@ -344,12 +540,12 @@ class Game {
       transparent: true,
       opacity: 0.74
     });
-    const domeGeo = new THREE.SphereGeometry(0.34, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    const domeGeo = new THREE.SphereGeometry(0.34, domeSeg, domeRings, 0, Math.PI * 2, 0, Math.PI / 2);
     const dome = new THREE.Mesh(domeGeo, glassMat);
     dome.position.y = 0.08;
     ship.add(dome);
 
-    const innerRingGeo = new THREE.TorusGeometry(0.2, 0.022, 6, 28);
+    const innerRingGeo = new THREE.TorusGeometry(0.2, 0.022, innerT, innerP);
     const innerRingMat = new THREE.MeshStandardMaterial({
       color: 0xff00aa,
       emissive: 0xff0088,
@@ -363,9 +559,9 @@ class Game {
     ship.add(innerRing);
 
     const navColors = [0xff0088, 0x00ff88, 0x8800ff, 0xffff00, 0x00ffff, 0xff6600];
-    const navDotGeo = new THREE.SphereGeometry(0.045, 6, 5);
-    for (let i = 0; i < 6; i++) {
-      const angle = (i / 6) * Math.PI * 2;
+    const navDotGeo = new THREE.SphereGeometry(0.045, this.isMobile ? 5 : 6, this.isMobile ? 4 : 5);
+    for (let i = 0; i < navCount; i++) {
+      const angle = (i / navCount) * Math.PI * 2;
       const dotMat = new THREE.MeshStandardMaterial({
         color: navColors[i],
         emissive: navColors[i],
@@ -378,7 +574,7 @@ class Game {
       ship.add(dot);
     }
 
-    const beamGeo = new THREE.ConeGeometry(0.38, 1.55, 10, 1, true);
+    const beamGeo = new THREE.ConeGeometry(0.38, 1.55, beamSeg, 1, true);
     const beamMat = new THREE.MeshBasicMaterial({
       color: 0x00ffaa,
       transparent: true,
@@ -392,7 +588,7 @@ class Game {
     beam.rotation.x = Math.PI;
     ship.add(beam);
 
-    const glowGeo = new THREE.SphereGeometry(0.14, 8, 6);
+    const glowGeo = new THREE.SphereGeometry(0.14, glowSeg, glowRings);
     const engineGlowMat = new THREE.MeshBasicMaterial({
       color: 0x00ffcc,
       transparent: true,
@@ -458,8 +654,10 @@ class Game {
       liteMobileVisuals: this.isMobile,
       ultraLiteSky: this.isMobile,
       staggerPrebakeFrames: this.isMobile ? 3 : 1,
-      /** Eviction + sync rebake spikes VRAM churn on some drivers — keep all baked levels resident on phone. */
+      /** Low-tier: live floor/walls only — no eviction of baked levels (none used). */
       evictRemoteTexturesOnMobile: false,
+      /** All phones: skip huge prebaked canvas atlases — lower VRAM spikes when changing floors. */
+      liveLevelTexturesOnly: this.isMobile,
       /** Hazards = dozens of extra meshes + materials per floor; skip on mobile. */
       disableHazardMeshes: this.isMobile
     });
@@ -469,18 +667,27 @@ class Game {
     this.enemyManager = new EnemyManager(this.scene, this.physicsWorld, {
       maxEnemyProjectiles: this.perf.maxEnemyProjectiles,
       maxShootersPerWave: this.perf.maxShootersPerWave,
-      poolReplenishTo: this.isMobile ? 2 : Math.max(2, this.perf.poolClonesPerModel + 1)
+      /** One warmed clone per enemy FBX on phones — extras use cheap fallback (stable VRAM). */
+      poolReplenishTo: this.isMobile ? 1 : Math.max(2, this.perf.poolClonesPerModel + 1),
+      /** Never clone skinned FBX during combat on phones — pool + cheap fallback only. */
+      preferPoolOnly: this.isMobile,
+      /** Halves AnimationMixer CPU on phones (staggered 2× delta when sampled). */
+      mixerHalfRateMobile: this.isMobile
     });
     this.enemyManager.onEnemyDeath = (enemy) => this.onEnemyKilled(enemy);
 
     this.itemManager = new ItemManager(this.scene, {
       maxCoinsAlive: this.perf.maxCoinsAlive,
-      maxPowerupsAlive: this.perf.maxPowerupsAlive
+      maxPowerupsAlive: this.perf.maxPowerupsAlive,
+      singlePowerupRing: this.isMobile
     });
 
     this.waveManager = new WaveManager(this.enemyManager, {
       maxEnemiesPerWave: this.perf.maxEnemiesPerWave,
-      hasActivePlayerProjectiles: () => this.weapon.hasActiveProjectiles()
+      hasActivePlayerProjectiles: () => this.weapon.hasActiveProjectiles(),
+      ...(this.isMobile
+        ? { spawnDelay: 520, earlySpawnDelay: 420, lateSpawnDelay: 560 }
+        : {})
     });
     this.waveManager.setPlayerCamera(this.camera);
     this.enemyManager.setWaveManager(this.waveManager);
@@ -494,11 +701,11 @@ class Game {
     };
 
     this.waveManager.onLevelChange = (levelIndex) => {
-      if (this.isMobile) {
+      if (this.isMobile && !this.arena.liveLevelTexturesOnly) {
         this.arena.ensureLevelTexturesReadySync(levelIndex);
       }
       const level = this.arena.setLevel(levelIndex);
-      if (this.isMobile) {
+      if (this.isMobile && !this.arena.liveLevelTexturesOnly) {
         this.arena.evictRemoteLevelTextures(levelIndex);
       }
       this._mobileDbg?.mark('LEVEL_CHANGE', String(levelIndex));
@@ -510,7 +717,18 @@ class Game {
     this.waveManager.onWaveComplete = (wave) => {
       this.score += wave * 100;
       this.ui.updateScore(this.score);
-      this.enemyManager.replenishPool();
+      if (this.isMobile) {
+        const drainPool = () => {
+          // Must NOT gate on isRunning — dare/store sets isRunning false and would abort
+          // after one clone, leaving pools empty for the next wave (wave 4+ crash pattern).
+          if (!this.modelsReady || !this.enemyManager) return;
+          if (!this.enemyManager.replenishPoolStep()) return;
+          requestAnimationFrame(drainPool);
+        };
+        requestAnimationFrame(drainPool);
+      } else {
+        this.enemyManager.replenishPool();
+      }
       if (wave >= TOTAL_WAVES) {
         this.showVictory();
       } else {
@@ -532,6 +750,9 @@ class Game {
         };
         (async () => {
           await this.waveClear.ensureLoaded().catch(() => {});
+          if (this.isMobile) {
+            await new Promise((r) => requestAnimationFrame(r));
+          }
           this.waveClear.start(wave, this.player, yaw, goDare);
         })();
       }
@@ -544,6 +765,12 @@ class Game {
 
   applyLevelEffect(level) {
     this.currentLevelEffect = level.effect || null;
+    if (this.currentLevelEffect && this.isMobile && this.currentLevelEffect.type === 'poisonDOT') {
+      this.currentLevelEffect = {
+        ...this.currentLevelEffect,
+        interval: Math.max(this.currentLevelEffect.interval || 2000, this.isLowTierMobile ? 2800 : 2400)
+      };
+    }
     this.poisonTickTime = 0;
 
     this.weapon.damage = this.getBaseDamage();
@@ -592,10 +819,20 @@ class Game {
       '/models/thriller_part3.fbx'
     ];
     let done = 0;
+    const total = models.length;
     const bump = () => {
       done++;
-      onProgress?.(done, models.length);
+      onProgress?.(done, total);
     };
+    /** Parallel FBX decode spikes memory / main thread on iOS — load one file per frame on mobile. */
+    if (this.isMobile) {
+      for (const path of models) {
+        await this.enemyManager.loadFBX(path).catch(() => {});
+        bump();
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return;
+    }
     await Promise.all(
       models.map((path) =>
         this.enemyManager.loadFBX(path).catch(() => {}).finally(bump)
@@ -606,12 +843,46 @@ class Game {
   setupEventListeners() {
     window.addEventListener('error', (ev) => {
       console.warn('[KOL BASH]', ev.error || ev.message);
+      // #region agent log
+      _agentLog(
+        'main.js:window.error',
+        'window_error',
+        {
+          msg: String(ev.message || '').slice(0, 240),
+          name: ev.error?.name,
+          stack: typeof ev.error?.stack === 'string' ? ev.error.stack.slice(0, 500) : ''
+        },
+        'B',
+        'pre'
+      );
+      // #endregion
     });
     window.addEventListener('unhandledrejection', (ev) => {
       console.warn('[KOL BASH] unhandled', ev.reason);
+      // #region agent log
+      const r = ev.reason;
+      _agentLog(
+        'main.js:unhandledrejection',
+        'unhandled_rejection',
+        {
+          reason: typeof r === 'string' ? r.slice(0, 400) : (r?.message || String(r)).slice(0, 400)
+        },
+        'B',
+        'pre'
+      );
+      // #endregion
     });
 
     document.addEventListener('visibilitychange', () => {
+      // #region agent log
+      _agentLog(
+        'main.js:visibilitychange',
+        'visibility',
+        { hidden: document.hidden, isRunning: this.isRunning, glLost: this._glContextLost },
+        'C',
+        'pre'
+      );
+      // #endregion
       if (document.hidden) {
         this.clock.stop();
         this.gameMusic?.suspendForBackground();
@@ -625,20 +896,32 @@ class Game {
       }
     });
 
-    window.addEventListener('resize', () => this.onWindowResize());
-
-    const startScr = document.getElementById('start-screen');
-    if (startScr) {
-      startScr.addEventListener(
-        'pointerup',
-        (e) => {
-          if (e.button > 0) return;
-          e.preventDefault();
-          this.startGame();
-        },
-        { passive: false }
+    window.addEventListener('pagehide', (e) => {
+      // #region agent log
+      _agentLog(
+        'main.js:pagehide',
+        'pagehide',
+        { persisted: !!e.persisted, isRunning: this.isRunning, glLost: this._glContextLost },
+        'C',
+        'pre'
       );
-    }
+      // #endregion
+    });
+
+    window.addEventListener('resize', () => {
+      if (this.isMobile) {
+        if (this._resizeDebounceT) clearTimeout(this._resizeDebounceT);
+        this._resizeDebounceT = setTimeout(() => {
+          this._resizeDebounceT = null;
+          this.onWindowResize();
+        }, 200);
+      } else {
+        this.onWindowResize();
+      }
+    });
+
+    this.profilePreview = new CharacterProfilePreview(document.getElementById('char-profile-preview-mount'));
+    this._characterSelect = new CharacterSelectController(this);
 
     const jumpBtn = document.getElementById('jump-btn');
     if (jumpBtn) {
@@ -671,10 +954,17 @@ class Game {
   onWindowResize() {
     const w = Math.max(1, window.innerWidth || 1);
     const h = Math.max(1, window.innerHeight || 1);
+    const pr = Math.min(window.devicePixelRatio || 1, this.perf.maxPixelRatio);
+    if (w === this._lastResizeW && h === this._lastResizeH && pr === this._lastResizePR) {
+      return;
+    }
+    this._lastResizeW = w;
+    this._lastResizeH = h;
+    this._lastResizePR = pr;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.perf.maxPixelRatio));
+    this.renderer.setPixelRatio(pr);
     if (this.deathSequenceActive && this.deathScene) {
       this.deathScene.camera.aspect = this.camera.aspect;
       this.deathScene.camera.updateProjectionMatrix();
@@ -766,10 +1056,33 @@ class Game {
       document.getElementById('mobile-controls')?.style.setProperty('display', 'none');
     }
     this.ui.showStartScreen();
+    void this.ensureCinematicsForSelection();
+    this._characterSelect?.refreshStartButton();
+    this._characterSelect?.relayout();
   }
 
   restartRun() {
     if (!this.modelsReady) return;
+    if (this._resizeDebounceT) {
+      clearTimeout(this._resizeDebounceT);
+      this._resizeDebounceT = null;
+    }
+    // #region agent log
+    _agentLog(
+      'main.js:restartRun',
+      'restart_run',
+      {
+        waveBeforeReset: this.waveManager?.currentWave,
+        countdownBusy: !!this._waveCountdownRunning,
+        tex: this.renderer?.info?.memory?.textures ?? 0,
+        geom: this.renderer?.info?.memory?.geometries ?? 0
+      },
+      'K',
+      'pre'
+    );
+    // #endregion
+    this._waveCountdownSerial = (this._waveCountdownSerial || 0) + 1;
+    this._waveCountdownRunning = false;
     resumeSharedAudioContext();
     this.deathSequenceActive = false;
     if (this.deathScene?.active) this.deathScene.stop();
@@ -788,6 +1101,7 @@ class Game {
     this.currentWeapon = 'disco';
     this.weapon.setWeapon('disco');
     this.specialAttackActive = false;
+    this._pendingSpecialStart = null;
     this.specialCharge = 0;
     this.specialReady = false;
     this.specialAttack?.stop();
@@ -803,7 +1117,7 @@ class Game {
     this.clearAllyShips();
 
     this.arena.setLevel(0);
-    if (this.isMobile) {
+    if (this.isMobile && !this.arena.liveLevelTexturesOnly) {
       this.arena.evictRemoteLevelTextures(0);
     }
     this.applyLevelEffect(LEVELS[0]);
@@ -836,9 +1150,14 @@ class Game {
   }
 
   async runWaveCountdownThenStartWave() {
+    const serial = this._waveCountdownSerial;
     try {
       if (this._waveCountdownRunning) return;
       this._waveCountdownRunning = true;
+      if (serial !== this._waveCountdownSerial) {
+        this._waveCountdownRunning = false;
+        return;
+      }
       this.player.inputFrozen = true;
       this.weapon.isHolding = false;
 
@@ -848,6 +1167,7 @@ class Game {
 
       let wavePrimed = false;
       try {
+        if (serial !== this._waveCountdownSerial) return;
         this.ui.showWaveCountdown();
         if (!this.isRunning || this.player.isDead) return;
 
@@ -857,25 +1177,29 @@ class Game {
         this.ui.updateLevelName(this.arena.getLevelName());
 
         for (const n of [3, 2, 1]) {
+          if (serial !== this._waveCountdownSerial) return;
           if (!this.isRunning || this.player.isDead) return;
           this.ui.setWaveCountdownDigit(String(n), false);
           this.waveManager.playCountdownTick(n);
           await sleep(tickMs);
         }
+        if (serial !== this._waveCountdownSerial) return;
         if (!this.isRunning || this.player.isDead) return;
         this.ui.setWaveCountdownDigit('GO!', true);
         this.waveManager.playCountdownGo();
         await sleep(goMs);
       } finally {
-        this.ui.hideWaveCountdown();
-        this._waveCountdownRunning = false;
-        if (wavePrimed) {
-          const ok = this.isRunning && !this.player.isDead;
-          this.waveManager.releaseDeferredWaveStart({ silent: !ok });
-        } else if (this.isRunning && !this.player.isDead) {
-          this.waveManager.startNextWave(this.player.getPosition());
+        if (serial === this._waveCountdownSerial) {
+          this.ui.hideWaveCountdown();
+          this._waveCountdownRunning = false;
+          if (wavePrimed) {
+            const ok = this.isRunning && !this.player.isDead;
+            this.waveManager.releaseDeferredWaveStart({ silent: !ok });
+          } else if (this.isRunning && !this.player.isDead) {
+            this.waveManager.startNextWave(this.player.getPosition());
+          }
+          this.player.inputFrozen = false;
         }
-        this.player.inputFrozen = false;
       }
     } finally {
       this._overlayResumeBusy = false;
@@ -973,6 +1297,9 @@ class Game {
   startGame() {
     if (this.isRunning) return;
     if (!this.modelsReady) return;
+    const ch = getCharacter(this.selectedCharacterId);
+    if (!ch.playable) return;
+    if (!this.isCinematicReadyForSelection()) return;
     resumeSharedAudioContext();
     this.restartRun();
   }
@@ -1002,14 +1329,15 @@ class Game {
     const coinCount = (2 + Math.floor(Math.random() * 3)) * coinMultiplier;
     this._spawnPos = this._spawnPos || new THREE.Vector3();
     this._spawnPos.copy(enemy.position);
-    this.itemManager.spawnCoins(this._spawnPos, Math.min(coinCount, 10));
+    const coinCap = this.isMobile ? (this.isLowTierMobile ? 4 : 6) : 10;
+    this.itemManager.spawnCoins(this._spawnPos, Math.min(coinCount, coinCap));
 
     if (isBoss) {
       this.itemManager.spawnPowerup(this._spawnPos, 3);
-      if (Math.random() < 0.5) {
+      if (!this.isMobile && Math.random() < 0.5) {
         this.itemManager.spawnPowerup(this._spawnPos);
       }
-    } else if (Math.random() < 0.18) {
+    } else if (Math.random() < (this.isMobile ? 0.12 : 0.18)) {
       this.itemManager.spawnPowerup(this._spawnPos);
     }
   }
@@ -1019,11 +1347,10 @@ class Game {
     if (this.player.inputFrozen) return;
     if (!this.player.controls.isLocked) return;
 
-    const shot = this.weapon.tryFire(this.player.rapidFire);
-    if (!shot) return;
+    const dir = this.weapon.tryFire(this.player.rapidFire);
+    if (!dir) return;
 
     const muzzlePos = this.weapon.getMuzzleWorldPosition();
-    const dir = shot.direction;
 
     let closestEnemy = null;
     let closestDistSq = 60 * 60;
@@ -1119,6 +1446,7 @@ class Game {
   // ── Ally Ship System ──
 
   spawnAllyShip() {
+    if (this.isMobile && this.allyShips.length >= 1) return;
     this._buildAllyShipTemplate();
     const ship = this._allyShipTemplate.clone(true);
     const rim = ship.getObjectByName('allyRim');
@@ -1128,7 +1456,7 @@ class Game {
       spawnTime: performance.now(),
       duration: dur,
       lastShot: 0,
-      shotInterval: 400,
+      shotInterval: this.isMobile ? (this.isLowTierMobile ? 620 : 520) : 400,
       orbitAngle: Math.random() * Math.PI * 2,
       orbitRadius: 4,
       orbitHeight: 3.5,
@@ -1194,6 +1522,7 @@ class Game {
       if (proj.userData.life <= 0) {
         this.scene.remove(proj);
         this.allyProjectiles.splice(i, 1);
+        if (this._allyBoltPool.length < 32) this._allyBoltPool.push(proj);
         continue;
       }
 
@@ -1206,6 +1535,7 @@ class Game {
           this.enemyManager.damageEnemy(enemy, proj.userData.damage);
           this.scene.remove(proj);
           this.allyProjectiles.splice(i, 1);
+          if (this._allyBoltPool.length < 32) this._allyBoltPool.push(proj);
           break;
         }
       }
@@ -1213,16 +1543,24 @@ class Game {
   }
 
   allyShipFire(ship, target) {
-    if (this.allyProjectiles.length >= 10) return;
-    const dir = new THREE.Vector3().subVectors(target.position, ship.position).normalize();
-    const proj = new THREE.Mesh(this.allyBoltGeo, this.allyBoltMat);
+    const maxBolt = this.isMobile ? 4 : 10;
+    if (this.allyProjectiles.length >= maxBolt) return;
+    const dir = this._allyDirScratch.subVectors(target.position, ship.position);
+    if (dir.lengthSq() < 1e-8) return;
+    dir.normalize();
+
+    let proj = this._allyBoltPool.pop();
+    if (!proj) {
+      proj = new THREE.Mesh(this.allyBoltGeo, this.allyBoltMat);
+    }
     proj.position.copy(ship.position);
-    proj.userData = {
-      velocity: dir.multiplyScalar(18),
-      life: 2,
-      damage: 15,
-      sharedBoltMat: true
-    };
+    const vel = proj.userData.velocity || (proj.userData.velocity = { x: 0, y: 0, z: 0 });
+    vel.x = dir.x * 18;
+    vel.y = dir.y * 18;
+    vel.z = dir.z * 18;
+    proj.userData.life = 2;
+    proj.userData.damage = 15;
+    proj.userData.sharedBoltMat = true;
     this.scene.add(proj);
     this.allyProjectiles.push(proj);
   }
@@ -1234,6 +1572,7 @@ class Game {
     this.allyShips = [];
     for (const p of this.allyProjectiles) {
       this.scene.remove(p);
+      if (this._allyBoltPool.length < 32) this._allyBoltPool.push(p);
     }
     this.allyProjectiles = [];
   }
@@ -1250,7 +1589,7 @@ class Game {
         this.poisonTickTime = 0;
         for (const enemy of this.enemyManager.enemies) {
           if (!enemy.userData.isDead) {
-            this.enemyManager.damageEnemy(enemy, fx.value);
+            this.enemyManager.damageEnemy(enemy, fx.value, { skipFlash: true });
             this.damageDealt += fx.value;
           }
         }
@@ -1345,20 +1684,33 @@ class Game {
 
   getPlayerYaw() {
     if (this.player.isMobile) return this.player.cameraYaw;
-    const euler = new THREE.Euler(0, 0, 0, 'YXZ');
-    euler.setFromQuaternion(this.camera.quaternion);
-    return euler.y;
+    this._yawEulerScratch.setFromQuaternion(this.camera.quaternion);
+    return this._yawEulerScratch.y;
   }
 
   trySpecialAttack() {
     const now = performance.now();
-    if (!this.isRunning || this.player.isDead || this.specialAttackActive) return;
+    if (!this.isRunning || this.player.isDead || this.specialAttackActive || this._pendingSpecialStart) return;
     if (!this.specialReady || !this.specialAttack?.canStart()) {
       if (now - this._lastSpecialRejectMs < 320) return;
       this._lastSpecialRejectMs = now;
       return;
     }
     this._lastSpecialRejectMs = 0;
+    // #region agent log
+    _agentLog(
+      'main.js:trySpecialAttack',
+      'special_start',
+      {
+        wave: this.waveManager?.currentWave,
+        level: this.arena?.currentLevel,
+        tex: this.renderer?.info?.memory?.textures ?? 0,
+        geom: this.renderer?.info?.memory?.geometries ?? 0
+      },
+      'J',
+      'pre'
+    );
+    // #endregion
     this._mobileDbg?.mark('SPECIAL_START', '');
 
     this.specialReady = false;
@@ -1375,7 +1727,7 @@ class Game {
     this.player.controls.unlock();
 
     const yaw = this.getPlayerYaw();
-    this.specialAttack.start(yaw, this.enemyManager, {
+    const specialCallbacks = {
       onDamage: (amt) => {
         this.damageDealt += amt;
       },
@@ -1393,11 +1745,13 @@ class Game {
           }
         }
       }
-    });
+    };
+    this._pendingSpecialStart = { yaw, callbacks: specialCallbacks };
   }
 
   beginDeathSequence() {
     if (this.deathSequenceActive) return;
+    this._pendingSpecialStart = null;
     this._mobileDbg?.mark('DEATH_SEQUENCE', '');
     if (this.specialAttackActive) {
       this.specialAttack.stop();
@@ -1448,13 +1802,26 @@ class Game {
 
   animateDeath() {
     if (!this.deathSequenceActive) return;
-    requestAnimationFrame(() => this.animateDeath());
-    if (this.isMobile && typeof document !== 'undefined' && document.hidden) return;
-    const delta = Math.min(this.deathScene.clock.getDelta(), 0.08);
-    this.deathScene.update(this.renderer, delta);
+    const skipHidden = this.isMobile && typeof document !== 'undefined' && document.hidden;
+    if (!skipHidden) {
+      const delta = Math.min(this.deathScene.clock.getDelta(), 0.08);
+      this.deathScene.update(this.renderer, delta);
+    }
+    if (this.deathSequenceActive) {
+      requestAnimationFrame(() => this.animateDeath());
+    }
   }
 
   animate() {
+    // #region agent log
+    if (_agentLogEnabled()) {
+      this.__animDepth = (this.__animDepth || 0) + 1;
+      if (this.__animDepth > 1) {
+        _agentLog('main.js:animate', 'reentrant_animate', { depth: this.__animDepth }, 'E', 'pre');
+      }
+    }
+    // #endregion
+    try {
     if (this._glContextLost) return;
 
     const skipFrameHidden = this.isMobile && typeof document !== 'undefined' && document.hidden;
@@ -1475,11 +1842,27 @@ class Game {
       } catch (err) {
         this._mobileDbg?.mark('FRAME_ERR_WAVECLEAR', String(err?.message || err));
         console.warn('[KOL BASH] frame (wave clear)', err);
+        // #region agent log
+        _agentLog(
+          'main.js:animate',
+          'frame_err_waveclear',
+          { err: String(err?.message || err).slice(0, 400) },
+          'D',
+          'pre'
+        );
+        // #endregion
       }
       return;
     }
 
-    if (!this.isRunning) return;
+    if (!this.isRunning) {
+      if (this._pendingSpecialStart) {
+        this._pendingSpecialStart = null;
+        this.specialAttackActive = false;
+        this.player.inputFrozen = false;
+      }
+      return;
+    }
 
     requestAnimationFrame(() => this.animate());
 
@@ -1490,6 +1873,44 @@ class Game {
       const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
       this._mobileDbg?.tickFrame(delta * 1000);
       const playerPos = this.player.getPosition();
+
+      if (this._pendingSpecialStart) {
+        const p = this._pendingSpecialStart;
+        this._pendingSpecialStart = null;
+        if (this.specialAttackActive && this.isRunning && !this.player.isDead) {
+          this.specialAttack.start(p.yaw, this.enemyManager, p.callbacks);
+        } else {
+          this.specialAttackActive = false;
+          this.player.inputFrozen = false;
+        }
+      }
+
+      // #region agent log
+      if (_agentLogEnabled() && this.isMobile) {
+        const now = performance.now();
+        if (now - (this._lastAgentHeartbeat || 0) > 12000) {
+          this._lastAgentHeartbeat = now;
+          _agentLog(
+            'main.js:animate',
+            'heartbeat',
+            {
+              wave: this.waveManager?.currentWave,
+              level: this.arena?.currentLevel,
+              glLost: this._glContextLost,
+              tex: this.renderer?.info?.memory?.textures ?? 0,
+              geom: this.renderer?.info?.memory?.geometries ?? 0,
+              death: !!this.deathSequenceActive,
+              spc: !!this.specialAttackActive,
+              wc: !!this.waveClear?.active,
+              allies: this.allyShips?.length ?? 0,
+              running: !!this.isRunning
+            },
+            'H',
+            'pre'
+          );
+        }
+      }
+      // #endregion
 
       this.physicsWorld.update(delta);
       this.player.update(delta);
@@ -1548,6 +1969,20 @@ class Game {
     } catch (err) {
       this._mobileDbg?.mark('FRAME_ERR_MAIN', String(err?.message || err));
       console.warn('[KOL BASH] frame', err);
+      // #region agent log
+      _agentLog(
+        'main.js:animate',
+        'frame_err_main',
+        { err: String(err?.message || err).slice(0, 400) },
+        'D',
+        'pre'
+      );
+      // #endregion
+    }
+    } finally {
+      // #region agent log
+      if (_agentLogEnabled()) this.__animDepth--;
+      // #endregion
     }
   }
 }

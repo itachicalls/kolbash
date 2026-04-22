@@ -67,6 +67,12 @@ export class Weapon {
     this._lastHitSoundMs = 0;
     this._vel = new THREE.Vector3();
     this._trailTmp = new THREE.Vector3();
+    /** Reused for quaternion alignment (avoid `new Vector3` inside projectile update). */
+    this._projLocalFwd = new THREE.Vector3(0, 0, -1);
+    this._tryFireDirection = new THREE.Vector3();
+    this._muzzlePos = new THREE.Vector3();
+    this._muzzleDir = new THREE.Vector3();
+    this._ndcCenter = new THREE.Vector2(0, 0);
 
     this.audioContext = null;
     this.initAudio();
@@ -166,10 +172,10 @@ export class Weapon {
   }
 
   getMuzzleWorldPosition() {
-    const pos = this.camera.position.clone();
-    const dir = new THREE.Vector3();
-    this.camera.getWorldDirection(dir);
-    return pos.add(dir.multiplyScalar(0.8));
+    this._muzzlePos.copy(this.camera.position);
+    this.camera.getWorldDirection(this._muzzleDir);
+    this._muzzlePos.addScaledVector(this._muzzleDir, 0.8);
+    return this._muzzlePos;
   }
 
   tryFire(rapidFire = false) {
@@ -182,13 +188,10 @@ export class Weapon {
     this.fireFlashUntil = now + 80;
     this.playShootSound(rapidFire);
     this.recoil = 0.03;
-    this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+    this.raycaster.setFromCamera(this._ndcCenter, this.camera);
 
-    return {
-      ray: this.raycaster.ray,
-      origin: this.raycaster.ray.origin.clone(),
-      direction: this.raycaster.ray.direction.clone()
-    };
+    this._tryFireDirection.copy(this.raycaster.ray.direction);
+    return this._tryFireDirection;
   }
 
   _makeGlowSphere(radius, color, opacity) {
@@ -352,8 +355,19 @@ export class Weapon {
     proj.visible = true;
     proj.userData.active = true;
     proj.userData.startTime = performance.now();
-    proj.userData.origin = origin.clone();
-    proj.userData.target = targetPosition instanceof THREE.Vector3 ? targetPosition.clone() : new THREE.Vector3(targetPosition.x, targetPosition.y, targetPosition.z);
+    let o = proj.userData._originVec;
+    let t = proj.userData._targetVec;
+    if (!o) {
+      o = new THREE.Vector3();
+      t = new THREE.Vector3();
+      proj.userData._originVec = o;
+      proj.userData._targetVec = t;
+    }
+    o.copy(origin);
+    if (targetPosition instanceof THREE.Vector3) t.copy(targetPosition);
+    else t.set(targetPosition.x, targetPosition.y, targetPosition.z);
+    proj.userData.origin = o;
+    proj.userData.target = t;
     proj.userData.onHit = onHit;
     proj.userData.duration = this.projDuration;
     proj.userData.weaponType = this.currentType;
@@ -361,7 +375,8 @@ export class Weapon {
     this._vel.subVectors(proj.userData.target, proj.userData.origin);
     if (this._vel.lengthSq() < 1e-6) this._vel.set(0, 0, -1);
     else this._vel.normalize();
-    proj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), this._vel);
+    this._projLocalFwd.set(0, 0, -1);
+    proj.quaternion.setFromUnitVectors(this._projLocalFwd, this._vel);
   }
 
   hasActiveProjectiles() {
@@ -389,7 +404,8 @@ export class Weapon {
       this._vel.subVectors(p.userData.target, p.userData.origin);
       if (this._vel.lengthSq() > 1e-6) {
         this._vel.normalize();
-        p.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), this._vel);
+        this._projLocalFwd.set(0, 0, -1);
+        p.quaternion.setFromUnitVectors(this._projLocalFwd, this._vel);
       }
 
       const wt = p.userData.weaponType;

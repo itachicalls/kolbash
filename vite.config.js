@@ -1,14 +1,23 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  root: '.',
-  publicDir: 'public',
+  /** So phone / tablet on Wi‑Fi can open `http://<your-PC-LAN-IP>:5173` (see terminal). */
   server: {
-    port: 3000,
-    open: true
+    host: true,
+    port: 5173,
+    strictPort: false
   },
   build: {
-    outDir: 'dist',
-    assetsDir: 'assets'
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('three/examples')) return 'three-examples';
+          if (id.includes('three')) return 'three-vendor';
+          if (id.includes('cannon-es')) return 'cannon-vendor';
+        }
+      }
+    },
+    chunkSizeWarningLimit: 550
   }
 });

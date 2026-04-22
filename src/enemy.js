@@ -46,17 +46,68 @@ export class EnemyManager {
 
     this.enemyProjectiles = [];
     this.maxEnemyProjectiles = opts.maxEnemyProjectiles ?? 10;
+    this._projDirScratch = new THREE.Vector3();
     this.enemyProjectileGeo = new THREE.TorusGeometry(0.08, 0.025, 6, 8);
+    /** Recycled enemy bolt meshes (same geo + shared mat per color). */
+    this._enemyProjPool = [];
     /** Reuse MeshBasicMaterials by enemy color — never dispose per shot (mobile). */
     this._enemyProjMatByColor = new Map();
+
+    /** Shared health bar plate (was one MeshBasicMaterial per enemy — VRAM + dispose hazards). */
+    this._hbBgSharedMat = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.7,
+      side: THREE.DoubleSide,
+      depthTest: false
+    });
+    this._hbBgSharedMat.userData.skipDispose = true;
+
+    /** Reused when computing model bounds on first spawn of each FBX type. */
+    this._spawnBounds = new THREE.Box3();
+    this._spawnCenter = new THREE.Vector3();
+
+    /** Mobile: halves AnimationMixer CPU (30Hz effective) + staggers health-bar lookAt. */
+    this._updateFrame = 0;
     this.shootersThisWave = 0;
     this.maxShootersPerWave = opts.maxShootersPerWave ?? 3;
     this.poolReplenishTo = opts.poolReplenishTo ?? 3;
+    /**
+     * When true (mobile), never SkeletonUtils.clone during combat — use pool or spawn fallback mesh.
+     * Runtime FBX clones are a top cause of WebKit tab kills under load.
+     */
+    this.preferPoolOnly = opts.preferPoolOnly === true;
+    /** Stagger skinned mixer updates across enemies (2× delta when sampled) to cut CPU on phones. */
+    this._mixerHalfRateMobile = opts.mixerHalfRateMobile === true;
 
     this.audioContext = null;
     this.initAudio();
 
     this.waveManager = null;
+
+    /** Lazily built shared meshes for pool-miss fallback (mobile preferPoolOnly). */
+    this._fallbackSharedReady = false;
+    this._fbBodyGeo = null;
+    this._fbBodyGeoBoss = null;
+    this._fbHeadGeo = null;
+    this._fbHeadGeoBoss = null;
+    this._fallbackBodyMatByColor = new Map();
+    this._fallbackHeadMat = null;
+
+    this._healthBarGeosReady = false;
+    this._hbBgGeoN = null;
+    this._hbBgGeoB = null;
+    this._hbFillGeoN = null;
+    this._hbFillGeoB = null;
+  }
+
+  _ensureHealthBarGeometries() {
+    if (this._healthBarGeosReady) return;
+    this._healthBarGeosReady = true;
+    this._hbBgGeoN = new THREE.PlaneGeometry(1.0, 0.15);
+    this._hbBgGeoB = new THREE.PlaneGeometry(1.8, 0.15);
+    this._hbFillGeoN = new THREE.PlaneGeometry(0.9, 0.1);
+    this._hbFillGeoB = new THREE.PlaneGeometry(1.7, 0.1);
   }
 
   setWaveManager(waveManager) {
@@ -91,6 +142,13 @@ export class EnemyManager {
    * Yaw-only toward player plus model faceOffset. Full lookAt + Euler Y tweaks
    * mis-orients FBX roots when the player moves behind the enemy.
    */
+  /** @returns {number} Delta to pass to `AnimationMixer.update`, or 0 to skip this frame. */
+  _effectiveMixerDelta(enemyIndex, mixerDelta, isBoss) {
+    if (isBoss || !this._mixerHalfRateMobile || mixerDelta <= 0) return mixerDelta;
+    if (((this._updateFrame + enemyIndex) & 1) !== 0) return 0;
+    return mixerDelta * 2;
+  }
+
   applyEnemyFaceYaw(enemy, data, dirXZ, dist, now) {
     if (dist < 0.02) return;
     const off = (data.type.faceOffset ?? 0) * Math.PI / 180;
@@ -214,22 +272,42 @@ export class EnemyManager {
     }
   }
 
+  /**
+   * Refill all model pools up to poolReplenishTo (may clone many FBXs in one frame — avoid on low-tier mobile).
+   */
   replenishPool() {
+    while (this.replenishPoolStep()) {
+      /* sync drain */
+    }
+  }
+
+  /**
+   * Clone at most one pooled enemy model, for the first path that is below poolReplenishTo.
+   * @returns {boolean} true if any pool is still below target (caller should schedule another step).
+   */
+  replenishPoolStep() {
     const target = this.poolReplenishTo;
     for (const [path, modelData] of this.modelCache) {
       const pool = this.modelPool.get(path) || [];
       this.modelPool.set(path, pool);
-      while (pool.length < target) {
+      if (pool.length < target) {
         try {
           pool.push(SkeletonUtils.clone(modelData.fbx));
         } catch (e) {}
+        break;
       }
     }
+    for (const [path] of this.modelCache) {
+      const pool = this.modelPool.get(path) || [];
+      if (pool.length < target) return true;
+    }
+    return false;
   }
 
   getPooledClone(path) {
     const pool = this.modelPool.get(path);
     if (pool && pool.length > 0) return pool.pop();
+    if (this.preferPoolOnly) return null;
     const modelData = this.modelCache.get(path);
     if (modelData) return SkeletonUtils.clone(modelData.fbx);
     return null;
@@ -238,20 +316,23 @@ export class EnemyManager {
   // ── Visual Helpers ──
 
   createHealthBar(isBoss = false) {
+    this._ensureHealthBarGeometries();
     const group = new THREE.Group();
     const width = isBoss ? 1.8 : 1.0;
 
-    const bg = new THREE.Mesh(
-      new THREE.PlaneGeometry(width, 0.15),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthTest: false })
-    );
+    const bgGeo = isBoss ? this._hbBgGeoB : this._hbBgGeoN;
+    const fillGeo = isBoss ? this._hbFillGeoB : this._hbFillGeoN;
+
+    const bg = new THREE.Mesh(bgGeo, this._hbBgSharedMat);
+    bg.userData.sharedPoolGeometry = true;
     bg.renderOrder = 999;
     group.add(bg);
 
     const fill = new THREE.Mesh(
-      new THREE.PlaneGeometry(width - 0.1, 0.1),
+      fillGeo,
       new THREE.MeshBasicMaterial({ color: isBoss ? 0xff0000 : 0x00ff00, side: THREE.DoubleSide, depthTest: false })
     );
+    fill.userData.sharedPoolGeometry = true;
     fill.position.z = 0.01;
     fill.renderOrder = 1000;
     group.add(fill);
@@ -263,21 +344,39 @@ export class EnemyManager {
     return group;
   }
 
-  createFallbackModel(type) {
-    const group = new THREE.Group();
-    const scale = type.isBoss ? 1.4 : 1;
+  _ensureFallbackSharedAssets() {
+    if (this._fallbackSharedReady) return;
+    this._fallbackSharedReady = true;
+    this._fbBodyGeo = new THREE.CapsuleGeometry(0.3, 0.9, 4, 8);
+    this._fbBodyGeoBoss = new THREE.CapsuleGeometry(0.42, 1.26, 4, 8);
+    this._fbHeadGeo = new THREE.SphereGeometry(0.2, 8, 6);
+    this._fbHeadGeoBoss = new THREE.SphereGeometry(0.28, 8, 6);
+    this._fallbackHeadMat = new THREE.MeshBasicMaterial({ color: 0xffccaa });
+  }
 
-    const body = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.3 * scale, 0.9 * scale, 4, 8),
-      new THREE.MeshBasicMaterial({ color: type.color })
-    );
+  _fallbackBodyMaterial(color) {
+    let m = this._fallbackBodyMatByColor.get(color);
+    if (!m) {
+      m = new THREE.MeshBasicMaterial({ color });
+      this._fallbackBodyMatByColor.set(color, m);
+    }
+    return m;
+  }
+
+  createFallbackModel(type) {
+    this._ensureFallbackSharedAssets();
+    const group = new THREE.Group();
+    const isBoss = !!type.isBoss;
+    const scale = isBoss ? 1.4 : 1;
+
+    const bodyGeo = isBoss ? this._fbBodyGeoBoss : this._fbBodyGeo;
+    const headGeo = isBoss ? this._fbHeadGeoBoss : this._fbHeadGeo;
+
+    const body = new THREE.Mesh(bodyGeo, this._fallbackBodyMaterial(type.color));
     body.position.y = 0.8 * scale;
     group.add(body);
 
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.2 * scale, 8, 6),
-      new THREE.MeshBasicMaterial({ color: 0xffccaa })
-    );
+    const head = new THREE.Mesh(headGeo, this._fallbackHeadMat);
     head.position.y = 1.5 * scale;
     group.add(head);
 
@@ -315,8 +414,9 @@ export class EnemyManager {
 
         let offsets = this.modelOffsetCache.get(type.model);
         if (!offsets) {
-          const box = new THREE.Box3().setFromObject(model);
-          const center = box.getCenter(new THREE.Vector3());
+          this._spawnBounds.setFromObject(model);
+          const center = this._spawnBounds.getCenter(this._spawnCenter);
+          const box = this._spawnBounds;
           offsets = {
             minY: box.min.y / scale,
             cx: center.x / scale,
@@ -353,9 +453,12 @@ export class EnemyManager {
     enemy.scale.setScalar(0.01);
 
     const now = performance.now();
+    const poolPath = modelData && model && !model.userData.isFallback ? type.model : null;
+
     enemy.userData = {
       type, health: type.health, maxHealth: type.health,
       model, mixer, action, healthBar,
+      poolPath,
       isDead: false, deathTime: 0,
       spawnTime: now,
       swayOffset: Math.random() * Math.PI * 2,
@@ -388,7 +491,7 @@ export class EnemyManager {
 
   // ── Damage ──
 
-  damageEnemy(enemy, damage) {
+  damageEnemy(enemy, damage, options = {}) {
     if (!enemy || enemy.userData.isDead) return false;
 
     enemy.userData.health -= damage;
@@ -409,7 +512,7 @@ export class EnemyManager {
       else fillMat.color.setHex(0xff0000);
     }
 
-    this.flashEnemy(enemy);
+    if (!options.skipFlash) this.flashEnemy(enemy);
 
     if (enemy.userData.health <= 0) {
       this.killEnemy(enemy);
@@ -420,6 +523,7 @@ export class EnemyManager {
   }
 
   flashEnemy(enemy) {
+    if (this.preferPoolOnly) return;
     if (enemy.userData.isFlashing) return;
     enemy.userData.isFlashing = true;
 
@@ -458,21 +562,60 @@ export class EnemyManager {
 
   removeEnemy(enemy) {
     const idx = this.enemies.indexOf(enemy);
-    if (idx !== -1) {
-      this.enemies.splice(idx, 1);
-      this.scene.remove(enemy);
+    if (idx === -1) return;
 
-      enemy.traverse((child) => {
-        if (child.isMesh) {
-          child.geometry?.dispose();
-          if (Array.isArray(child.material)) {
-            child.material.forEach(m => m.dispose());
-          } else {
-            child.material?.dispose();
-          }
+    this.enemies.splice(idx, 1);
+
+    const data = enemy.userData;
+    const model = data?.model;
+    const healthBar = data?.healthBar;
+    const poolPath = data?.poolPath;
+
+    if (data?.mixer) {
+      try {
+        data.mixer.stopAllAction();
+      } catch (e) {}
+      data.mixer = null;
+    }
+
+    const disposeMeshSubtree = (root) => {
+      root.traverse((child) => {
+        if (!child.isMesh) return;
+        if (!child.userData?.sharedPoolGeometry) child.geometry?.dispose();
+        if (Array.isArray(child.material)) {
+          child.material.forEach((m) => {
+            if (!m?.userData?.skipDispose) m?.dispose?.();
+          });
+        } else if (!child.material?.userData?.skipDispose) {
+          child.material?.dispose?.();
         }
       });
+    };
+
+    if (healthBar) {
+      enemy.remove(healthBar);
+      disposeMeshSubtree(healthBar);
     }
+
+    if (poolPath && model && !model.userData?.isFallback) {
+      enemy.remove(model);
+      model.scale.setScalar(1);
+      model.position.set(0, 0, 0);
+      model.rotation.set(0, 0, 0);
+      const pool = this.modelPool.get(poolPath) || [];
+      if (pool.length < this.poolReplenishTo) {
+        pool.push(model);
+      } else {
+        disposeMeshSubtree(model);
+      }
+      this.modelPool.set(poolPath, pool);
+      this.scene.remove(enemy);
+      return;
+    }
+
+    this.scene.remove(enemy);
+    // Fallback uses shared Capsule/Sphere geoms + shared materials — never dispose them here.
+    if (model && !model.userData?.isFallback) disposeMeshSubtree(model);
   }
 
   // ── Main Update Loop ──
@@ -485,8 +628,11 @@ export class EnemyManager {
     }
 
     const speedMult = this.slowMotion ? 0.25 : 1.0;
+    this._updateFrame++;
+    const mixerDelta = deltaTime * speedMult;
     this._toPlayer = this._toPlayer || new THREE.Vector3();
     this._perp = this._perp || new THREE.Vector3();
+    const doHealthBillboard = !this.preferPoolOnly || this._updateFrame % 2 === 0;
 
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const enemy = this.enemies[i];
@@ -515,7 +661,8 @@ export class EnemyManager {
           const s = age * age * (3 - 2 * age);
           enemy.scale.setScalar(Math.max(0.01, s));
         }
-        if (data.mixer) data.mixer.update(deltaTime * speedMult);
+        const md0 = this._effectiveMixerDelta(i, mixerDelta, !!data.type?.isBoss);
+        if (md0 > 0 && data.mixer) data.mixer.update(md0);
         const toPlayer = this._toPlayer;
         toPlayer.subVectors(playerPosition, enemy.position);
         toPlayer.y = 0;
@@ -525,7 +672,8 @@ export class EnemyManager {
       }
 
       if (this.waveManager?.combatHoldActive) {
-        if (data.mixer) data.mixer.update(deltaTime * speedMult);
+        const md1 = this._effectiveMixerDelta(i, mixerDelta, !!data.type?.isBoss);
+        if (md1 > 0 && data.mixer) data.mixer.update(md1);
         const toPlayer = this._toPlayer;
         toPlayer.subVectors(playerPosition, enemy.position);
         toPlayer.y = 0;
@@ -534,7 +682,8 @@ export class EnemyManager {
       }
 
       // ── Animation mixer ──
-      if (data.mixer) data.mixer.update(deltaTime * speedMult);
+      const md2 = this._effectiveMixerDelta(i, mixerDelta, !!data.type?.isBoss);
+      if (md2 > 0 && data.mixer) data.mixer.update(md2);
 
       // ── Fallback model animation ──
       if (data.model.userData.isFallback) {
@@ -664,8 +813,8 @@ export class EnemyManager {
 
       this.applyEnemyFaceYaw(enemy, data, toPlayer, dist, now);
 
-      // ── Health bar billboard ──
-      if (data.healthBar.visible) {
+      // ── Health bar billboard (lookAt every skinned mesh frame is costly on iOS) ──
+      if (data.healthBar.visible && doHealthBillboard) {
         data.healthBar.lookAt(playerPosition);
       }
 
@@ -691,6 +840,7 @@ export class EnemyManager {
       if (proj.userData.life <= 0) {
         this.scene.remove(proj);
         this.enemyProjectiles.splice(i, 1);
+        if (this._enemyProjPool.length < 48) this._enemyProjPool.push(proj);
       }
     }
   }
@@ -700,10 +850,10 @@ export class EnemyManager {
   spawnEnemyProjectile(enemy, playerPosition) {
     if (this.enemyProjectiles.length >= this.maxEnemyProjectiles) return;
 
-    const dir = new THREE.Vector3().subVectors(playerPosition, enemy.position).normalize();
+    const dir = this._projDirScratch.subVectors(playerPosition, enemy.position);
     dir.y = 0;
     if (dir.lengthSq() < 0.01) return;
-    dir.normalize();
+    dir.normalize().multiplyScalar(6);
 
     const colorKey = enemy.userData.type.color;
     let mat = this._enemyProjMatByColor.get(colorKey);
@@ -711,19 +861,25 @@ export class EnemyManager {
       mat = new THREE.MeshBasicMaterial({ color: colorKey, side: THREE.DoubleSide });
       this._enemyProjMatByColor.set(colorKey, mat);
     }
-    const proj = new THREE.Mesh(this.enemyProjectileGeo, mat);
-    proj.rotation.x = Math.PI / 2;
-    proj.rotation.z = Math.PI / 2;
+    let proj = this._enemyProjPool.pop();
+    if (!proj) {
+      proj = new THREE.Mesh(this.enemyProjectileGeo, mat);
+      proj.rotation.x = Math.PI / 2;
+      proj.rotation.z = Math.PI / 2;
+    } else {
+      proj.material = mat;
+    }
     proj.position.copy(enemy.position);
     proj.position.y = enemy.userData.scaledHeight * 0.6;
     const baseDmg = enemy.userData.type.isBoss ? 8 : 4;
     const dmg = Math.round(baseDmg * (enemy.userData.chaosMeleeMul ?? 1));
-    proj.userData = {
-      velocity: dir.clone().multiplyScalar(6),
-      damage: dmg,
-      life: 3,
-      sharedEnemyProjMat: true
-    };
+    const vel = proj.userData.velocity || (proj.userData.velocity = { x: 0, y: 0, z: 0 });
+    vel.x = dir.x;
+    vel.y = dir.y;
+    vel.z = dir.z;
+    proj.userData.damage = dmg;
+    proj.userData.life = 3;
+    proj.userData.sharedEnemyProjMat = true;
     this.scene.add(proj);
     this.enemyProjectiles.push(proj);
   }
@@ -758,6 +914,7 @@ export class EnemyManager {
     this.shootersThisWave = 0;
     for (const p of [...this.enemyProjectiles]) {
       this.scene.remove(p);
+      if (this._enemyProjPool.length < 48) this._enemyProjPool.push(p);
     }
     this.enemyProjectiles = [];
   }

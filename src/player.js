@@ -36,6 +36,12 @@ export class Player {
 
     this.velocity = new THREE.Vector3();
     this.direction = new THREE.Vector3();
+    /** Reused in update / mobile camera — avoid per-frame allocations. */
+    this._mobileEulerScratch = new THREE.Euler(0, 0, 0, 'YXZ');
+    this._camMoveDir = new THREE.Vector3();
+    this._worldUp = new THREE.Vector3(0, 1, 0);
+    this._rightMoveVec = new THREE.Vector3();
+    this._getDirCache = new THREE.Vector3();
 
     const touchCapable =
       ('ontouchstart' in window) || (typeof navigator !== 'undefined' && (navigator.maxTouchPoints ?? 0) > 0);
@@ -243,19 +249,19 @@ export class Player {
     if (!this.controls.isLocked) return;
 
     if (this.isMobile) {
-      const euler = new THREE.Euler(this.cameraPitch, this.cameraYaw, 0, 'YXZ');
-      this.camera.quaternion.setFromEuler(euler);
+      this._mobileEulerScratch.set(this.cameraPitch, this.cameraYaw, 0);
+      this.camera.quaternion.setFromEuler(this._mobileEulerScratch);
     }
 
     this.checkGroundContact();
 
-    const cameraDirection = new THREE.Vector3();
+    const cameraDirection = this._camMoveDir;
     this.camera.getWorldDirection(cameraDirection);
     cameraDirection.y = 0;
     cameraDirection.normalize();
 
-    const rightVector = new THREE.Vector3();
-    rightVector.crossVectors(cameraDirection, new THREE.Vector3(0, 1, 0)).normalize();
+    const rightVector = this._rightMoveVec;
+    rightVector.crossVectors(cameraDirection, this._worldUp).normalize();
 
     this.direction.set(0, 0, 0);
     if (this.moveForward) this.direction.add(cameraDirection);
@@ -307,10 +313,10 @@ export class Player {
     return this._posCache;
   }
 
+  /** Returns reused vector; copy if you need to keep it past the caller's synchronous use. */
   getDirection() {
-    const dir = new THREE.Vector3();
-    this.camera.getWorldDirection(dir);
-    return dir;
+    this.camera.getWorldDirection(this._getDirCache);
+    return this._getDirCache;
   }
 
   activateRapidFire(duration) {

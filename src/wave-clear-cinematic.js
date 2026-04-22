@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
+/** Default (Serena V.) wave-clear clips — copied into each instance; roster may replace paths. */
 export const WAVE_CLEAR_MODELS = [
   '/models/wave-clear/aiming-gun.fbx',
   '/models/wave-clear/baseball-hit.fbx',
@@ -58,12 +59,35 @@ function smoothstep(t) {
   return x * x * (3 - 2 * x);
 }
 
+function disposeModelGraph(root) {
+  root.traverse((obj) => {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach((m) => m.dispose?.());
+    }
+  });
+}
+
 export class WaveClearCinematic {
-  constructor(scene, camera) {
+  /**
+   * @param {{ skipFbx?: boolean; deferSkinned?: boolean }} [opts]
+   *   skipFbx: no victory FBX — short camera zoom only.
+   *   deferSkinned: split clone / mixer across frames (mobile).
+   */
+  constructor(scene, camera, opts = {}) {
     this.scene = scene;
     this.camera = camera;
+    this._skipFbx = opts.skipFbx === true;
+    this._deferSkinned = opts.deferSkinned === true;
+    /** Saved look target when `_skipFbx` zoom runs without a clip model. */
+    this._liteLook = new THREE.Vector3();
     this.loader = new FBXLoader();
     this.cache = new Map();
+    /** One pooled clone per clip path — avoids per-wave SkeletonUtils.clone + dispose (iOS GPU churn). */
+    this._instancePool = new Map();
+    /** Active FBX list for the selected fighter (default: Serena). */
+    this._wavePaths = [...WAVE_CLEAR_MODELS];
 
     this.active = false;
     this.model = null;
@@ -83,11 +107,48 @@ export class WaveClearCinematic {
     this._look = new THREE.Vector3();
 
     this._onDone = null;
+    this._wcBootQueue = null;
   }
 
-  /** True when every wave-clear file loaded successfully. */
+  /** True when every wave-clear file for the active path list is cached. */
   isFullyLoaded() {
-    return WAVE_CLEAR_MODELS.every((p) => this.cache.has(p));
+    if (this._skipFbx) return true;
+    return this._wavePaths.every((p) => this.cache.has(p));
+  }
+
+  /** Free wave-clear FBX data so another fighter's set can load. */
+  purgeCaches() {
+    for (const [, meta] of this.cache) {
+      if (meta?.fbx) {
+        try {
+          disposeModelGraph(meta.fbx);
+        } catch (e) {}
+      }
+    }
+    this.cache.clear();
+    for (const [, arr] of this._instancePool) {
+      if (!arr) continue;
+      for (const clone of arr) {
+        try {
+          disposeModelGraph(clone);
+        } catch (e) {}
+      }
+    }
+    this._instancePool.clear();
+  }
+
+  /**
+   * Replace which three victory clips rotate per wave; purges any cached FBX not in the new list.
+   * @param {string[]} paths
+   */
+  setWavePaths(paths) {
+    const next = (paths || []).filter(Boolean);
+    if (next.length === 0) return;
+    if (next.length === this._wavePaths.length && next.every((p, i) => p === this._wavePaths[i])) {
+      return;
+    }
+    this.purgeCaches();
+    this._wavePaths = next.slice();
   }
 
   /** Await if mobile deferred preload — call before start(). */
@@ -101,6 +162,7 @@ export class WaveClearCinematic {
    */
   preload(options = {}) {
     if (this.isFullyLoaded()) return Promise.resolve();
+    if (this._skipFbx) return Promise.resolve();
 
     const loadOne = (path) =>
       new Promise((resolve) => {
@@ -117,6 +179,16 @@ export class WaveClearCinematic {
               animations,
               originalHeight: size.y || 1
             });
+            try {
+              const warm = SkeletonUtils.clone(fbx);
+              const arr = this._instancePool.get(path) || [];
+              if (arr.length < 1) {
+                arr.push(warm);
+                this._instancePool.set(path, arr);
+              }
+            } catch (e) {
+              console.warn('WaveClearCinematic: pool warm failed', path, e);
+            }
             resolve();
           },
           undefined,
@@ -129,14 +201,14 @@ export class WaveClearCinematic {
 
     if (options.serial === true) {
       return (async () => {
-        for (const path of WAVE_CLEAR_MODELS) {
+        for (const path of this._wavePaths) {
           await loadOne(path);
           await new Promise((r) => requestAnimationFrame(r));
         }
       })();
     }
 
-    return Promise.all(WAVE_CLEAR_MODELS.map((path) => loadOne(path)));
+    return Promise.all(this._wavePaths.map((path) => loadOne(path)));
   }
 
   /**
@@ -148,9 +220,30 @@ export class WaveClearCinematic {
   start(completedWave, player, playerYaw, onComplete) {
     if (this.active) this.stop(false);
 
-    const idx = (completedWave - 1) % WAVE_CLEAR_MODELS.length;
-    const path = WAVE_CLEAR_MODELS[idx];
+    const n = this._wavePaths.length || 1;
+    const idx = (completedWave - 1) % n;
+    const path = this._wavePaths[idx];
     const meta = this.cache.get(path);
+
+    if (this._skipFbx) {
+      this._onDone = onComplete;
+      this.active = true;
+      this.zoomElapsed = 0;
+      this.totalElapsed = 0;
+      this.model = null;
+      this.mixer = null;
+      this.action = null;
+      this.savedPos.copy(this.camera.position);
+      this.savedQuat.copy(this.camera.quaternion);
+      if (this.camera.isPerspectiveCamera) this.savedFov = this.camera.fov;
+      this._fwd.set(-Math.sin(playerYaw), 0, -Math.cos(playerYaw));
+      this._zoomPos.copy(this.savedPos);
+      this._zoomPos.addScaledVector(this._fwd, -ZOOM_BACK);
+      this._zoomPos.y += ZOOM_LIFT;
+      this._liteLook.set(player.body.position.x, player.body.position.y + 1.15, player.body.position.z);
+      this.clipDuration = 0.95;
+      return;
+    }
 
     if (!meta) {
       queueMicrotask(() => onComplete?.());
@@ -171,13 +264,56 @@ export class WaveClearCinematic {
     this._zoomPos.addScaledVector(this._fwd, -ZOOM_BACK);
     this._zoomPos.y += ZOOM_LIFT;
 
-    this.model = SkeletonUtils.clone(meta.fbx);
-    const scale = TARGET_HEIGHT / (meta.originalHeight || 1);
-    this.model.scale.setScalar(scale);
-    const box = new THREE.Box3().setFromObject(this.model);
     const px = player.body.position.x;
     const pz = player.body.position.z;
     const py = player.body.position.y;
+
+    if (this._deferSkinned) {
+      this._wcBootQueue = [
+        () => {
+          const pool = this._instancePool.get(path);
+          let model = pool && pool.length ? pool.pop() : null;
+          if (!model) model = SkeletonUtils.clone(meta.fbx);
+          model.userData._waveClearPoolPath = path;
+          this.model = model;
+          const scale = TARGET_HEIGHT / (meta.originalHeight || 1);
+          this.model.scale.setScalar(scale);
+          const box = new THREE.Box3().setFromObject(this.model);
+          this.model.position.set(px, py - box.min.y, pz);
+          this.model.rotation.y = playerYaw + Math.PI;
+          this.scene.add(this.model);
+        },
+        () => {
+          const clip = pickClip(meta.animations);
+          if (clip) {
+            this.mixer = new THREE.AnimationMixer(this.model);
+            this.action = this.mixer.clipAction(clip);
+            this.action.reset();
+            this.action.setLoop(THREE.LoopOnce, 1);
+            this.action.clampWhenFinished = true;
+            this.action.enabled = true;
+            this.action.setEffectiveWeight(1);
+            this.action.play();
+            this.mixer.update(0.001);
+            this.clipDuration = Math.min(Math.max(clip.duration, 1.2), 12);
+          } else {
+            this.clipDuration = 2.2;
+          }
+        }
+      ];
+      return;
+    }
+
+    const pool = this._instancePool.get(path);
+    let model = pool && pool.length ? pool.pop() : null;
+    if (!model) {
+      model = SkeletonUtils.clone(meta.fbx);
+    }
+    model.userData._waveClearPoolPath = path;
+    this.model = model;
+    const scale = TARGET_HEIGHT / (meta.originalHeight || 1);
+    this.model.scale.setScalar(scale);
+    const box = new THREE.Box3().setFromObject(this.model);
     this.model.position.set(px, py - box.min.y, pz);
     this.model.rotation.y = playerYaw + Math.PI;
 
@@ -203,6 +339,17 @@ export class WaveClearCinematic {
   update(delta) {
     if (!this.active) return false;
 
+    if (this._wcBootQueue?.length) {
+      const job = this._wcBootQueue.shift();
+      try {
+        job();
+      } catch (e) {
+        console.warn('WaveClearCinematic boot step', e);
+      }
+      if (this._wcBootQueue.length === 0) this._wcBootQueue = null;
+      return false;
+    }
+
     this.totalElapsed += delta;
     this.zoomElapsed += delta;
 
@@ -216,6 +363,8 @@ export class WaveClearCinematic {
         this.model.position.z
       );
       this.camera.lookAt(this._look);
+    } else if (this._skipFbx) {
+      this.camera.lookAt(this._liteLook);
     }
 
     if (this.camera.isPerspectiveCamera) {
@@ -239,6 +388,8 @@ export class WaveClearCinematic {
   stop(callDone) {
     if (!this.active && !this.model && !this.mixer) return;
 
+    this._wcBootQueue = null;
+
     if (this.camera.isPerspectiveCamera) {
       this.camera.fov = this.savedFov;
       this.camera.updateProjectionMatrix();
@@ -253,14 +404,19 @@ export class WaveClearCinematic {
     this.action = null;
 
     if (this.model) {
+      const path = this.model.userData._waveClearPoolPath;
       this.scene.remove(this.model);
-      this.model.traverse((obj) => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-          mats.forEach(m => m.dispose?.());
+      if (path) {
+        const arr = this._instancePool.get(path) || [];
+        if (arr.length < 1) {
+          arr.push(this.model);
+          this._instancePool.set(path, arr);
+        } else {
+          disposeModelGraph(this.model);
         }
-      });
+      } else {
+        disposeModelGraph(this.model);
+      }
       this.model = null;
     }
 

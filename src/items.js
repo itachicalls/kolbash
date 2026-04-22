@@ -30,6 +30,8 @@ export class ItemManager {
 
     this.maxCoinsAlive = opts.maxCoinsAlive ?? 110;
     this.maxPowerupsAlive = opts.maxPowerupsAlive ?? 10;
+    /** One fewer torus mesh per pickup on mobile. */
+    this.singlePowerupRing = opts.singlePowerupRing === true;
     
     this.audioContext = null;
     this.initAudio();
@@ -57,6 +59,77 @@ export class ItemManager {
       opacity: 0.35,
       side: THREE.DoubleSide
     }));
+
+    /** Recycled pickup meshes — avoids `new Group`/`new Mesh` storm on coin bursts (mobile GC). */
+    this._coinPool = [];
+    this._coinPoolCap = Math.max(96, this.maxCoinsAlive + 40);
+    this._powerupPool = [];
+    this._powerupPoolCap = Math.max(20, this.maxPowerupsAlive + 10);
+  }
+
+  _acquireCoin() {
+    const group = this._coinPool.pop();
+    if (group) {
+      group.visible = true;
+      return group;
+    }
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(this.coinGeo, this.coinMat));
+    g.add(new THREE.Mesh(this.coinRingGeo, this.coinRingMat));
+    return g;
+  }
+
+  _releaseCoin(coin) {
+    if (coin.parent) this.scene.remove(coin);
+    coin.visible = false;
+    coin.rotation.set(0, 0, 0);
+    coin.scale.set(1, 1, 1);
+    if (this._coinPool.length < this._coinPoolCap) this._coinPool.push(coin);
+  }
+
+  _acquirePowerupGroup() {
+    const group = this._powerupPool.pop();
+    if (group) {
+      group.visible = true;
+      return group;
+    }
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(this.powerupGeos[0], this.powerupMats[0]));
+    const ring = new THREE.Mesh(this.powerupRingGeo, this.powerupRingMats[0]);
+    ring.rotation.x = Math.PI / 2;
+    g.add(ring);
+    if (!this.singlePowerupRing) {
+      const ring2 = new THREE.Mesh(this.powerupRingGeo, this.powerupRingMats[0]);
+      ring2.rotation.z = Math.PI / 2;
+      g.add(ring2);
+    }
+    return g;
+  }
+
+  _applyPowerupVisuals(group, typeIndex) {
+    const ti = typeIndex % this.powerupGeos.length;
+    const core = group.children[0];
+    core.geometry = this.powerupGeos[ti];
+    core.material = this.powerupMats[ti];
+    const ring = group.children[1];
+    ring.geometry = this.powerupRingGeo;
+    ring.material = this.powerupRingMats[ti];
+    ring.rotation.x = Math.PI / 2;
+    if (group.children.length > 2) {
+      const ring2 = group.children[2];
+      ring2.geometry = this.powerupRingGeo;
+      ring2.material = this.powerupRingMats[ti];
+      ring2.rotation.z = Math.PI / 2;
+      ring2.visible = true;
+    }
+  }
+
+  _releasePowerup(p) {
+    if (p.parent) this.scene.remove(p);
+    p.visible = false;
+    p.rotation.set(0, 0, 0);
+    p.scale.set(1, 1, 1);
+    if (this._powerupPool.length < this._powerupPoolCap) this._powerupPool.push(p);
   }
   
   initAudio() {
@@ -102,29 +175,20 @@ export class ItemManager {
   spawnCoin(position) {
     while (this.coins.length >= this.maxCoinsAlive) {
       const oldest = this.coins.shift();
-      if (oldest) {
-        this.scene.remove(oldest);
-      }
+      if (oldest) this._releaseCoin(oldest);
     }
 
-    const group = new THREE.Group();
-    const core = new THREE.Mesh(this.coinGeo, this.coinMat);
-    group.add(core);
-    const ring = new THREE.Mesh(this.coinRingGeo, this.coinRingMat);
-    group.add(ring);
-
+    const group = this._acquireCoin();
     group.position.copy(position);
     group.position.x += (Math.random() - 0.5) * 1.2;
     group.position.z += (Math.random() - 0.5) * 1.2;
     group.position.y = 0.6 + Math.random() * 0.2;
 
-    group.userData = {
-      spawnTime: performance.now(),
-      baseY: group.position.y,
-      rotSpeed: 2.5 + Math.random() * 1.5,
-      collected: false,
-      isGroup: true
-    };
+    group.userData.spawnTime = performance.now();
+    group.userData.baseY = group.position.y;
+    group.userData.rotSpeed = 2.5 + Math.random() * 1.5;
+    group.userData.collected = false;
+    group.userData.isGroup = true;
 
     this.scene.add(group);
     this.coins.push(group);
@@ -141,31 +205,19 @@ export class ItemManager {
 
     while (this.powerups.length >= this.maxPowerupsAlive) {
       const old = this.powerups.shift();
-      if (old) this.scene.remove(old);
+      if (old) this._releasePowerup(old);
     }
 
-    const group = new THREE.Group();
+    const group = this._acquirePowerupGroup();
+    this._applyPowerupVisuals(group, typeIndex);
     group.position.copy(position);
     group.position.y = 1.0;
 
-    const core = new THREE.Mesh(this.powerupGeos[typeIndex % this.powerupGeos.length], this.powerupMats[typeIndex % this.powerupMats.length]);
-    group.add(core);
-
-    const ring = new THREE.Mesh(this.powerupRingGeo, this.powerupRingMats[typeIndex % this.powerupRingMats.length]);
-    ring.rotation.x = Math.PI / 2;
-    group.add(ring);
-
-    const ring2 = new THREE.Mesh(this.powerupRingGeo, this.powerupRingMats[typeIndex % this.powerupRingMats.length]);
-    ring2.rotation.z = Math.PI / 2;
-    group.add(ring2);
-
-    group.userData = {
-      powerupType: type,
-      typeIndex,
-      spawnTime: performance.now(),
-      baseY: 1.0,
-      collected: false
-    };
+    group.userData.powerupType = type;
+    group.userData.typeIndex = typeIndex;
+    group.userData.spawnTime = performance.now();
+    group.userData.baseY = 1.0;
+    group.userData.collected = false;
 
     this.scene.add(group);
     this.powerups.push(group);
@@ -218,7 +270,7 @@ export class ItemManager {
     const idx = this.coins.indexOf(coin);
     if (idx !== -1) {
       this.coins.splice(idx, 1);
-      this.scene.remove(coin);
+      this._releaseCoin(coin);
     }
   }
   
@@ -226,7 +278,7 @@ export class ItemManager {
     const idx = this.powerups.indexOf(powerup);
     if (idx !== -1) {
       this.powerups.splice(idx, 1);
-      this.scene.remove(powerup);
+      this._releasePowerup(powerup);
     }
   }
   

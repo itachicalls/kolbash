@@ -21,10 +21,22 @@ const BACKUP_ROW_SPACING = 1.42;
 const HERO_Z = 0.72;
 const BACKUP_Z = -1.05;
 
+function disposeModelGraph(root) {
+  root.traverse((obj) => {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach((m) => m.dispose?.());
+    }
+  });
+}
+
 function pickDanceClip(animations) {
   if (!animations?.length) return null;
   const lower = (n) => (n || '').toLowerCase();
   return (
+    animations.find(a => lower(a.name).includes('chicken')) ||
+    animations.find(a => lower(a.name).includes('samba')) ||
     animations.find(a => lower(a.name).includes('hip')) ||
     animations.find(a => lower(a.name).includes('dance')) ||
     animations.find(a => lower(a.name).includes('groove')) ||
@@ -63,6 +75,37 @@ export class DareBackupDancers {
     const cyan = new THREE.PointLight(0x00ffff, 0.45, 18);
     cyan.position.set(4, 2, 4);
     this.scene.add(cyan);
+
+    /** Mutable copy — index 0 is the spotlight hero; flanking backups stay shared. */
+    this._lineup = DARE_DANCER_MODELS.map((d) => ({
+      path: d.path,
+      faceDeg: d.faceDeg ?? 0,
+      scale: d.scale ?? 1
+    }));
+  }
+
+  /**
+   * Swap the center dare-stage dancer clip (e.g. Serena hip-hop vs Timmy samba).
+   * @param {string} path
+   */
+  setHeroPath(path) {
+    const next = String(path || '').trim();
+    if (!next || !this._lineup.length) return;
+    const prev = this._lineup[0].path;
+    if (prev === next) return;
+    this._lineup[0] = { ...this._lineup[0], path: next };
+    const stillUsed = this._lineup.some((d, i) => i > 0 && d.path === prev);
+    if (!stillUsed && this.cache.has(prev)) {
+      const meta = this.cache.get(prev);
+      this.cache.delete(prev);
+      if (meta?.source) {
+        try {
+          disposeModelGraph(meta.source);
+        } catch (e) {
+          console.warn('DareBackupDancers: hero dispose', e);
+        }
+      }
+    }
   }
 
   async preload(options = {}) {
@@ -93,12 +136,12 @@ export class DareBackupDancers {
     };
 
     if (serial) {
-      for (const def of DARE_DANCER_MODELS) {
+      for (const def of this._lineup) {
         await loadOne(def);
         await new Promise((r) => requestAnimationFrame(r));
       }
     } else {
-      await Promise.all(DARE_DANCER_MODELS.map((def) => loadOne(def)));
+      await Promise.all(this._lineup.map((def) => loadOne(def)));
     }
   }
 
@@ -133,7 +176,7 @@ export class DareBackupDancers {
     canvas.style.display = '';
     canvas.removeAttribute('aria-hidden');
 
-    const loaded = DARE_DANCER_MODELS.filter(d => this.cache.has(d.path));
+    const loaded = this._lineup.filter((d) => this.cache.has(d.path));
     if (loaded.length === 0) return;
 
     if (!this.renderer) {

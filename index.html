@@ -44,66 +44,368 @@
     #fatal-error h1 { color: #fff; font-size: 1.25rem; margin-bottom: 12px; }
     #fatal-error-msg { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 13px; color: #ffb0b0; }
 
-    /* ===== START SCREEN ===== */
+    /* ===== START SCREEN (epic dossier + video backdrop) ===== */
     #start-screen {
-      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-      background: radial-gradient(ellipse at 30% 50%, #1a0530 0%, #0a0a0f 70%);
-      display: none; flex-direction: column; justify-content: center; align-items: center;
-      z-index: 1000; cursor: pointer; overflow: hidden;
+      position: fixed; inset: 0;
+      display: none; flex-direction: column; align-items: center; justify-content: flex-start;
+      z-index: 1000; cursor: default; overflow-x: hidden; overflow-y: auto;
+      padding: clamp(0.5rem, 2vh, 1.25rem) clamp(0.75rem, 2.5vw, 1.5rem) clamp(4.5rem, 10vh, 6rem);
+      background: radial-gradient(ellipse 120% 80% at 50% 0%, #2a0a42 0%, #0c0318 42%, #030208 100%);
     }
 
-    #start-screen::before {
-      content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,0,255,0.03) 2px, rgba(255,0,255,0.03) 4px);
-      pointer-events: none; animation: scanlines 8s linear infinite;
+    .start-bg-media {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      overflow: hidden;
+      background: #050208;
+    }
+    .start-bg-video {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      opacity: 0.94;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .start-bg-video { display: none; }
+      .start-bg-media {
+        background: radial-gradient(ellipse 120% 80% at 50% 0%, #2a0a42 0%, #0c0318 42%, #030208 100%);
+      }
+    }
+    .start-vignette {
+      position: fixed; inset: 0; z-index: 1; pointer-events: none;
+      background: radial-gradient(ellipse at 50% 40%, transparent 0%, rgba(0,0,0,0.15) 55%, rgba(0,0,0,0.72) 100%);
+    }
+    .start-scan {
+      position: fixed; inset: 0; z-index: 1; pointer-events: none;
+      background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,0,200,0.025) 3px, rgba(255,0,200,0.025) 6px);
+      animation: scanlines 10s linear infinite;
+      opacity: 0.55;
+    }
+    @keyframes scanlines { to { transform: translateY(14px); } }
+
+    .start-inner {
+      position: relative; z-index: 2; width: 100%; max-width: min(96vw, 1420px);
+      display: flex; flex-direction: column; align-items: center;
     }
 
-    @keyframes scanlines { to { background-position: 0 100px; } }
-
+    .start-header {
+      width: 100%; text-align: center; padding: 0.25rem 0.5rem 0.35rem;
+      margin-bottom: clamp(0.25rem, 1vh, 0.65rem);
+    }
+    .start-title-3d-wrap {
+      perspective: 720px;
+      transform-style: preserve-3d;
+    }
+    .title-kol-3d {
+      display: inline-block;
+      transform-style: preserve-3d;
+      animation: titleKol3dPulse 2.75s ease-in-out infinite;
+    }
     .title-kol {
-      font-family: 'Orbitron', monospace; font-size: 6rem; font-weight: 900;
-      letter-spacing: 0.15em; line-height: 1;
-      background: linear-gradient(180deg, #ff00ff 0%, #ff0066 50%, #ff3300 100%);
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      filter: drop-shadow(0 0 30px rgba(255,0,100,0.6)) drop-shadow(0 0 60px rgba(255,0,255,0.3));
-      animation: titlePulse 3s ease-in-out infinite;
+      font-family: 'Orbitron', monospace;
+      font-size: clamp(2.35rem, 8.5vw, 5.4rem);
+      font-weight: 900;
+      letter-spacing: 0.1em;
+      line-height: 1.02;
+      margin: 0;
+      background: linear-gradient(180deg, #fff6ff 0%, #ff66ff 22%, #ff0088 52%, #ffaa00 92%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter:
+        drop-shadow(0 2px 0 rgba(60, 0, 48, 0.95))
+        drop-shadow(0 4px 0 rgba(40, 0, 32, 0.75))
+        drop-shadow(0 7px 0 rgba(24, 0, 20, 0.55))
+        drop-shadow(0 12px 28px rgba(0, 0, 0, 0.85))
+        drop-shadow(0 0 48px rgba(255, 0, 180, 0.55))
+        drop-shadow(0 0 90px rgba(0, 255, 255, 0.18));
     }
-
+    @keyframes titleKol3dPulse {
+      0%, 100% {
+        transform: perspective(640px) rotateX(10deg) translateZ(0) scale(1);
+        filter: brightness(1);
+      }
+      50% {
+        transform: perspective(640px) rotateX(4deg) translateZ(12px) scale(1.055);
+        filter: brightness(1.12);
+      }
+    }
     .title-sub {
-      font-family: 'Orbitron', monospace; font-size: 1.8rem; font-weight: 400;
-      color: #00ffff; letter-spacing: 0.5em; margin-top: -0.2rem;
-      text-shadow: 0 0 20px rgba(0,255,255,0.5);
+      font-family: 'Orbitron', monospace;
+      font-size: clamp(0.82rem, 2.1vw, 1.45rem);
+      font-weight: 500;
+      letter-spacing: 0.48em;
+      margin: 0.35rem 0 0;
+      color: #7af0ff;
+      text-shadow:
+        0 0 20px rgba(0, 255, 255, 0.55),
+        0 0 40px rgba(0, 200, 255, 0.25),
+        0 2px 0 rgba(0, 40, 50, 0.9);
+      animation: titleSubPulse 2.2s ease-in-out infinite;
+    }
+    @keyframes titleSubPulse {
+      0%, 100% { opacity: 0.88; letter-spacing: 0.48em; }
+      50% { opacity: 1; letter-spacing: 0.52em; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .title-kol-3d { animation: none; transform: none; }
+      .title-sub { animation: none; }
     }
 
-    @keyframes titlePulse {
-      0%, 100% { filter: drop-shadow(0 0 30px rgba(255,0,100,0.6)) drop-shadow(0 0 60px rgba(255,0,255,0.3)); }
-      50% { filter: drop-shadow(0 0 50px rgba(255,0,100,0.9)) drop-shadow(0 0 80px rgba(255,0,255,0.5)); }
+    .char-select-shell {
+      width: 100%; margin-top: clamp(0.35rem, 1.2vh, 0.85rem);
+      display: flex; flex-direction: column; align-items: center;
+      gap: clamp(0.75rem, 2vh, 1.35rem);
     }
 
-    .tagline {
-      font-size: 1.1rem; color: #666; margin-top: 2rem; margin-bottom: 3rem;
-      letter-spacing: 0.2em; text-transform: uppercase;
+    .char-dossier-card {
+      width: 100%;
+      border-radius: 20px;
+      background: linear-gradient(145deg, rgba(22, 6, 36, 0.94) 0%, rgba(6, 4, 18, 0.97) 100%);
+      border: 1px solid rgba(255, 0, 200, 0.28);
+      box-shadow:
+        0 0 0 1px rgba(0, 255, 255, 0.08) inset,
+        0 24px 80px rgba(0, 0, 0, 0.65),
+        0 0 60px rgba(120, 0, 90, 0.25);
+      overflow: hidden;
+    }
+    .dossier-top-bar {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.85rem 1.5rem;
+      padding: 0.75rem 1.35rem;
+      background: linear-gradient(90deg, rgba(255,0,140,0.15), transparent 40%, rgba(0,255,255,0.12));
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .dossier-badge {
+      font-family: 'Orbitron', monospace; font-size: clamp(0.62rem, 1.1vw, 0.78rem); letter-spacing: 0.32em;
+      color: rgba(255, 200, 255, 0.75);
+    }
+    .dossier-codename {
+      font-family: 'Orbitron', monospace; font-size: clamp(0.65rem, 1.15vw, 0.82rem); letter-spacing: 0.26em;
+      color: #7af0ff;
+      text-shadow: 0 0 12px rgba(0, 255, 255, 0.35);
+    }
+
+    .dossier-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.48fr) minmax(0, 1fr);
+      gap: 0; min-height: min(58vh, 700px);
+    }
+    @media (max-width: 900px) {
+      .dossier-grid { grid-template-columns: 1fr; min-height: unset; }
+    }
+
+    .dossier-visual-panel {
+      position: relative;
+      padding: clamp(1rem, 2.4vw, 1.85rem);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at 50% 80%, rgba(80, 0, 60, 0.35) 0%, transparent 65%),
+        linear-gradient(180deg, rgba(10, 4, 22, 0.6) 0%, rgba(4, 2, 12, 0.95) 100%);
+      border-right: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    @media (max-width: 900px) {
+      .dossier-visual-panel { border-right: none; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    }
+
+    .dossier-viewport {
+      position: relative; z-index: 1;
+      width: min(100%, 100%); flex: 1;
+      min-height: min(46vh, 520px); max-height: min(68vh, 820px);
+      border-radius: 16px;
+      background: radial-gradient(ellipse at 50% 20%, rgba(40, 20, 50, 0.9) 0%, #050208 72%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow:
+        inset 0 0 40px rgba(0, 0, 0, 0.75),
+        0 12px 40px rgba(0, 0, 0, 0.5),
+        0 0 0 1px rgba(255, 0, 200, 0.14),
+        0 0 48px rgba(120, 0, 90, 0.2);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .dossier-viewport-shine {
+      position: absolute; inset: 0; pointer-events: none; z-index: 2;
+      background: linear-gradient(125deg, rgba(255,255,255,0.14) 0%, transparent 38%, transparent 62%, rgba(0,255,255,0.06) 100%);
+      mix-blend-mode: overlay;
+    }
+    .dossier-viewport-noise {
+      position: absolute; inset: 0; pointer-events: none; z-index: 3; opacity: 0.04;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+    #char-profile-preview-mount {
+      position: relative; z-index: 1; flex: 1; width: 100%; min-height: min(38vh, 420px);
+      display: none; align-items: stretch; justify-content: center;
+    }
+    .char-profile-canvas-el {
+      display: block; width: 100% !important; height: 100% !important; object-fit: contain;
+      border-radius: 0;
+    }
+    .dossier-visual-caption {
+      margin-top: 0.65rem; font-family: 'Orbitron', monospace; font-size: clamp(0.58rem, 1vw, 0.72rem);
+      letter-spacing: 0.34em; color: rgba(180, 200, 220, 0.55);
+    }
+    .dossier-orbit-hint {
+      margin: 0.35rem 0 0; text-align: center;
+      font-size: clamp(0.68rem, 1.2vw, 0.88rem); letter-spacing: 0.1em; color: #8a90a8;
+    }
+
+    .dossier-intel {
+      padding: clamp(1.1rem, 2.4vw, 1.85rem) clamp(1.15rem, 2.8vw, 2.25rem);
+      display: flex; flex-direction: column; align-items: center;
+      text-align: center;
+      gap: clamp(0.75rem, 1.8vh, 1.1rem);
+      max-height: min(68vh, 820px);
+    }
+    .dossier-name {
+      font-family: 'Orbitron', monospace; font-size: clamp(1.45rem, 3.6vw, 2.45rem); font-weight: 800;
+      letter-spacing: 0.12em; margin: 0;
+      background: linear-gradient(92deg, #ff66dd, #66ffee);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 12px rgba(255, 0, 160, 0.35));
+    }
+    .dossier-role {
+      margin: 0; font-size: clamp(0.92rem, 1.75vw, 1.2rem); color: #aab6d4;
+      letter-spacing: 0.14em; text-transform: uppercase; line-height: 1.35;
+    }
+    .dossier-stat-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.65rem 0.85rem; width: 100%; max-width: 44rem;
+    }
+    .dossier-stat {
+      background: rgba(0, 0, 0, 0.38);
+      border: 1px solid rgba(255, 0, 200, 0.2);
+      border-radius: 12px; padding: 0.65rem 0.85rem 0.75rem;
+    }
+    .dossier-stat .lbl {
+      font-family: 'Orbitron', monospace; font-size: clamp(0.58rem, 1vw, 0.72rem); letter-spacing: 0.18em; color: #8892a8;
+      display: block; margin-bottom: 0.25rem;
+    }
+    .dossier-stat .val {
+      font-family: 'Orbitron', monospace; font-size: clamp(1.1rem, 2.2vw, 1.45rem); font-weight: 700;
+      color: #ffee88; text-shadow: 0 0 12px rgba(255, 220, 100, 0.28);
+    }
+    .dossier-stat .hint {
+      display: block; margin-top: 0.35rem; font-size: clamp(0.72rem, 1.25vw, 0.9rem); line-height: 1.45; color: #9ca6bc;
+    }
+    .dossier-story {
+      flex: 1; overflow-y: auto; margin: 0; padding: 0.15rem 0.35rem 0 0;
+      font-size: clamp(0.98rem, 1.75vw, 1.18rem); line-height: 1.72; color: #d2cee4;
+      letter-spacing: 0.02em; width: 100%; max-width: 44rem;
+    }
+    .dossier-story p { margin: 0 0 0.85rem; }
+    .dossier-story p:last-child { margin-bottom: 0; }
+    .dossier-lock {
+      margin: 0; font-family: 'Orbitron', monospace; font-size: clamp(0.72rem, 1.2vw, 0.88rem);
+      letter-spacing: 0.16em; color: #ff8899; line-height: 1.45;
+    }
+
+    .dossier-roster {
+      border-top: 1px solid rgba(255, 255, 255, 0.09);
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0.28) 0%, rgba(8, 2, 18, 0.45) 100%);
+      padding: 0.65rem 0.75rem 0.75rem;
+      display: flex; justify-content: center;
+    }
+
+    .char-carousel-wrap {
+      display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 0.65rem;
+      width: 100%; max-width: min(100%, 920px); margin: 0 auto; position: relative;
+    }
+    .char-nav {
+      flex: 0 0 auto; flex-shrink: 0;
+      width: 56px; height: 56px; border-radius: 50%;
+      border: 2px solid rgba(255, 0, 200, 0.65); background: rgba(4, 2, 14, 0.92);
+      color: #ffccff; font-size: 1.25rem; font-weight: 700; cursor: pointer;
+      box-shadow: 0 0 22px rgba(0, 0, 0, 0.85), 0 0 14px rgba(255, 0, 200, 0.35);
+      transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s;
+      z-index: 4;
+    }
+    .char-nav:hover:not(:disabled) {
+      transform: scale(1.08);
+      border-color: rgba(0, 255, 255, 0.65);
+      box-shadow: 0 0 18px rgba(255, 0, 200, 0.35);
+    }
+    .char-nav:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    #char-carousel-viewport {
+      flex: 1 1 auto; min-width: 140px; position: relative;
+      height: auto; min-height: 52px; max-width: 100%;
+      overflow: hidden;
+      mask-image: linear-gradient(90deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+      -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+    }
+    #char-carousel-viewport::after {
+      content: ''; position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
+      width: 72%; height: 3px; border-radius: 3px;
+      background: linear-gradient(90deg, transparent, rgba(255, 0, 200, 0.5), rgba(0, 255, 255, 0.45), transparent);
+      opacity: 0.85; pointer-events: none;
+    }
+    #char-carousel-track {
+      display: flex; gap: 12px; align-items: center; justify-content: flex-start;
+      min-height: 48px; padding: 6px 0; box-sizing: border-box; will-change: transform;
+      transition: transform 0.48s cubic-bezier(0.22, 1, 0.32, 1);
+    }
+    .char-card {
+      flex: 0 0 132px; width: 132px; min-width: 132px; max-width: 132px;
+      height: auto; position: relative;
+      border-radius: 8px; cursor: pointer; text-align: center;
+      background: rgba(10, 4, 22, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+      transform: scale(0.94); opacity: 0.72;
+      transition: transform 0.35s cubic-bezier(0.22, 1, 0.32, 1), opacity 0.3s ease, border-color 0.25s ease, box-shadow 0.3s ease;
+      padding: 0.42rem 0.55rem; font: inherit; color: inherit;
+    }
+    .char-card:hover { border-color: rgba(255, 0, 200, 0.45); }
+    .char-card-active {
+      transform: scale(1);
+      opacity: 1;
+      border-color: rgba(0, 255, 255, 0.55);
+      box-shadow:
+        0 0 0 1px rgba(255, 0, 200, 0.25),
+        0 0 20px rgba(255, 0, 160, 0.28),
+        0 6px 22px rgba(0, 0, 0, 0.55);
+    }
+    .char-card-locked { filter: saturate(0.5); }
+    .char-card-accent,
+    .char-card-orb {
+      display: none !important;
+    }
+    .char-card-name {
+      display: block; font-family: 'Orbitron', monospace; font-size: clamp(0.58rem, 1.4vw, 0.72rem);
+      font-weight: 700;
+      letter-spacing: 0.06em; color: #e8e0f0; line-height: 1.2;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .char-card-lock {
+      display: block; margin-top: 0.4rem; font-size: 0.48rem; letter-spacing: 0.26em; color: #778;
+    }
+
+    .start-actions {
+      position: relative; z-index: 2; margin-top: clamp(0.75rem, 2vh, 1.25rem);
+      width: 100%; display: flex; justify-content: center;
     }
 
     .start-btn {
-      font-family: 'Orbitron', monospace; font-size: 1.1rem; color: #000;
-      padding: 1rem 4rem; border: none; cursor: pointer;
+      font-family: 'Orbitron', monospace; font-size: clamp(1.05rem, 2vw, 1.35rem); color: #000;
+      padding: 1.15rem clamp(3rem, 10vw, 5rem); border: none; cursor: pointer;
       background: linear-gradient(90deg, #ff00ff, #00ffff);
       clip-path: polygon(8% 0%, 100% 0%, 92% 100%, 0% 100%);
       transition: all 0.2s ease; font-weight: 700; letter-spacing: 0.1em;
     }
 
-    .start-btn:hover { transform: scale(1.05); filter: brightness(1.2); }
+    .start-btn:hover:not(:disabled) { transform: scale(1.05); filter: brightness(1.2); }
+    .start-btn:disabled {
+      opacity: 0.42; cursor: not-allowed; filter: grayscale(0.25);
+      transform: none;
+    }
 
     .controls-info {
-      position: absolute; bottom: 2.5rem; color: #555; font-size: 0.85rem;
-      display: flex; gap: 0.5rem; align-items: center;
+      position: absolute; bottom: 2.5rem; left: 0; right: 0; justify-content: center;
+      z-index: 4; color: #7a7a8a; font-size: 0.85rem;
+      display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; pointer-events: none;
     }
 
     .music-credit {
       position: absolute; bottom: 0.85rem; left: 50%; transform: translateX(-50%);
-      max-width: 92vw; text-align: center; font-size: 0.62rem; color: #444;
-      letter-spacing: 0.04em; line-height: 1.35;
+      z-index: 4; max-width: 92vw; text-align: center; font-size: 0.62rem; color: #555;
+      letter-spacing: 0.04em; line-height: 1.35; pointer-events: none;
     }
     .music-credit a { color: #666; pointer-events: auto; }
 
@@ -721,8 +1023,15 @@
     @media (max-width: 900px) {
       .title-kol { font-size: 3rem; }
       .title-sub { font-size: 1rem; letter-spacing: 0.3em; }
-      .tagline { font-size: 0.8rem; margin-top: 1rem; margin-bottom: 2rem; }
+      .mission-brief { font-size: 0.72rem; padding: 0 0.35rem; }
       .start-btn { font-size: 0.9rem; padding: 0.8rem 2.5rem; }
+      #char-carousel-viewport { height: 200px; }
+      .char-card { flex: 0 0 132px; width: 132px; height: 178px; }
+      .char-card-orb { width: 44px; height: 44px; margin-top: 0.75rem; }
+      .char-nav { width: 38px; height: 38px; font-size: 0.85rem; margin-bottom: 1.6rem; }
+      .dossier-intel { max-height: none; }
+      .dossier-viewport { min-height: 240px; max-height: 360px; }
+      #char-profile-preview-mount { min-height: 220px; }
       .controls-info { display: none; }
       .music-credit { font-size: 0.5rem; bottom: 0.35rem; padding: 0 0.5rem; }
 
@@ -873,10 +1182,66 @@
   </div>
 
   <div id="start-screen" style="display: none;">
-    <div class="title-kol">KOL BASH</div>
-    <div class="title-sub">DISCO MAYHEM</div>
-    <p class="tagline">They came to groove. You came to destroy.</p>
-    <div class="start-btn">ENTER THE FLOOR</div>
+    <div class="start-bg-media" aria-hidden="true">
+      <video id="start-bg-video" class="start-bg-video" autoplay muted loop playsinline webkit-playsinline preload="metadata" aria-hidden="true">
+        <source src="/video/character-select-bg.mp4" type="video/mp4" />
+      </video>
+    </div>
+    <div class="start-vignette" aria-hidden="true"></div>
+    <div class="start-scan" aria-hidden="true"></div>
+
+    <div class="start-inner">
+      <header class="start-header">
+        <div class="start-title-3d-wrap">
+          <div class="title-kol-3d">
+            <h1 class="title-kol">KOL BASH</h1>
+          </div>
+          <p class="title-sub">DISCO MAYHEM</p>
+        </div>
+      </header>
+
+      <div class="char-select-shell">
+        <article class="char-dossier-card" aria-labelledby="char-detail-name">
+          <div class="dossier-top-bar">
+            <span class="dossier-badge">TRENCHVILLE DOSSIER</span>
+            <span id="char-dossier-codename" class="dossier-codename"></span>
+          </div>
+          <div class="dossier-grid">
+            <aside class="dossier-visual-panel" aria-label="Neural-synced operative preview">
+              <div class="dossier-viewport">
+                <div class="dossier-viewport-shine"></div>
+                <div id="char-profile-preview-mount" aria-live="polite"></div>
+                <div class="dossier-viewport-noise"></div>
+              </div>
+              <div class="dossier-visual-caption">LIVE SYNC // NEURAL PROFILE</div>
+              <p class="dossier-orbit-hint">Drag to rotate · scroll / pinch to zoom</p>
+            </aside>
+            <section class="dossier-intel">
+              <h2 id="char-detail-name" class="dossier-name">SERENA V.</h2>
+              <p id="char-detail-role" class="dossier-role"></p>
+              <div id="char-stats-grid" class="dossier-stat-grid"></div>
+              <div id="char-detail-story" class="dossier-story"></div>
+              <p id="char-detail-lock" class="dossier-lock" hidden></p>
+            </section>
+          </div>
+
+          <div class="dossier-roster">
+            <div class="char-carousel-wrap" aria-label="Choose operative">
+              <button type="button" class="char-nav" id="char-carousel-prev" aria-label="Previous character">◀</button>
+              <div id="char-carousel-viewport">
+                <div id="char-carousel-track"></div>
+              </div>
+              <button type="button" class="char-nav" id="char-carousel-next" aria-label="Next character">▶</button>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="start-actions">
+        <button type="button" class="start-btn" id="start-game-btn" disabled>LOADING…</button>
+      </div>
+    </div>
+
     <div class="controls-info">
       <span class="key">W A S D</span> Move
       <span class="key">MOUSE</span> Aim

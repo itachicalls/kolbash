@@ -1,6 +1,12 @@
 /**
  * Arena - Level-based themed environments
  * ZERO per-frame canvas work on walls. Wall decals redraw only on level change.
+ *
+ * Texture / VRAM budget (audit):
+ * - Floor + 4 wall decals: sizes from opts (main caps mobile floor 256², decals 224×112).
+ * - Space sky: one CanvasTexture; mobile uses lite/ultra sizes (see createSpaceSky).
+ * - Per-level baked floors/walls only when liveLevelTexturesOnly is false (desktop).
+ * - FBX character textures live inside binary assets; resize in DCC, not here.
  */
 
 import * as THREE from 'three';
@@ -101,6 +107,11 @@ export class Arena {
     this._evictRemoteTexturesOnMobile = opts.evictRemoteTexturesOnMobile === true;
     /** Skip spikes/asteroids (many meshes + shared mat dispose risk on level swap). */
     this._disableHazardMeshes = opts.disableHazardMeshes === true;
+    /**
+     * Low-tier phones: never use per-level baked CanvasTextures — one live floor + wall canvases only.
+     * Avoids a large synchronous GPU/CPU spike on the first level change (wave 3).
+     */
+    this.liveLevelTexturesOnly = opts.liveLevelTexturesOnly === true;
 
     this.createFloor();
     this.createSpaceSky();
@@ -480,8 +491,10 @@ export class Arena {
   createSpaceSky() {
     const lite = this._liteMobile === true;
     const ultra = this._ultraLiteSky === true;
-    const S = lite ? (ultra ? 384 : 512) : 1024;
-    const starCount = lite ? (ultra ? 120 : 220) : 500;
+    /** Reference art is authored for 1024²; scale coords when S is smaller (mobile VRAM). */
+    const S = lite ? (ultra ? 256 : 384) : 1024;
+    const skyScale = S / 1024;
+    const starCount = lite ? (ultra ? 80 : 180) : 500;
     const canvas = document.createElement('canvas');
     canvas.width = S;
     canvas.height = S;
@@ -503,13 +516,17 @@ export class Arena {
     ];
     const nebulaLayers = ultra ? 3 : 5;
     nebulae.forEach(n => {
+      const nx = n.x * skyScale;
+      const ny = n.y * skyScale;
+      const nrx = n.rx * skyScale;
+      const nry = n.ry * skyScale;
       for (let layer = 0; layer < nebulaLayers; layer++) {
-        const ng = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.rx + layer * 20);
+        const ng = ctx.createRadialGradient(nx, ny, 0, nx, ny, nrx + layer * 20 * skyScale);
         ng.addColorStop(0, n.color);
         ng.addColorStop(1, 'transparent');
         ctx.fillStyle = ng;
         ctx.beginPath();
-        ctx.ellipse(n.x, n.y, n.rx + layer * 20, n.ry + layer * 15, 0, 0, Math.PI * 2);
+        ctx.ellipse(nx, ny, nrx + layer * 20 * skyScale, nry + layer * 15 * skyScale, 0, 0, Math.PI * 2);
         ctx.fill();
       }
     });
@@ -543,35 +560,38 @@ export class Arena {
       { x: 120, y: 650, r: 80, colors: ['#22ccaa', '#118866', '#006644', '#003322'], ring: true, ringColor: 'rgba(0,200,160,0.1)' }
     ];
     planetDefs.forEach(p => {
-      const pg = ctx.createRadialGradient(p.x - p.r * 0.25, p.y - p.r * 0.25, p.r * 0.05, p.x, p.y, p.r);
+      const px = p.x * skyScale;
+      const py = p.y * skyScale;
+      const pr = p.r * skyScale;
+      const pg = ctx.createRadialGradient(px - pr * 0.25, py - pr * 0.25, pr * 0.05, px, py, pr);
       pg.addColorStop(0, p.colors[0]);
       pg.addColorStop(0.4, p.colors[1]);
       pg.addColorStop(0.75, p.colors[2]);
       pg.addColorStop(1, p.colors[3]);
       ctx.fillStyle = pg;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.arc(px, py, pr, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.globalAlpha = 0.15;
-      const atmo = ctx.createRadialGradient(p.x, p.y, p.r * 0.9, p.x, p.y, p.r * 1.2);
+      const atmo = ctx.createRadialGradient(px, py, pr * 0.9, px, py, pr * 1.2);
       atmo.addColorStop(0, p.colors[0]);
       atmo.addColorStop(1, 'transparent');
       ctx.fillStyle = atmo;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r * 1.2, 0, Math.PI * 2);
+      ctx.arc(px, py, pr * 1.2, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
 
       if (p.ring) {
         ctx.strokeStyle = p.ringColor;
-        ctx.lineWidth = 4;
+        ctx.lineWidth = Math.max(1, 4 * skyScale);
         ctx.beginPath();
-        ctx.ellipse(p.x, p.y, p.r * 1.8, p.r * 0.35, -0.3, 0, Math.PI * 2);
+        ctx.ellipse(px, py, pr * 1.8, pr * 0.35, -0.3, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.lineWidth = 2;
+        ctx.lineWidth = Math.max(1, 2 * skyScale);
         ctx.beginPath();
-        ctx.ellipse(p.x, p.y, p.r * 2.1, p.r * 0.4, -0.3, 0, Math.PI * 2);
+        ctx.ellipse(px, py, pr * 2.1, pr * 0.4, -0.3, 0, Math.PI * 2);
         ctx.stroke();
       }
     });
@@ -737,7 +757,16 @@ export class Arena {
 
     this.scene.background = new THREE.Color(level.bg);
 
-    if (this._isLevelPrebaked(this.currentLevel)) {
+    if (this.liveLevelTexturesOnly) {
+      this.floorMesh.material.map = this.floorTexture;
+      this.floorMesh.material.needsUpdate = true;
+      this.drawFloor(level);
+      for (const m of this.wallDecals) {
+        m.plane.material.map = m.texture;
+        m.plane.material.needsUpdate = true;
+      }
+      this.drawDiscoWalls(level);
+    } else if (this._isLevelPrebaked(this.currentLevel)) {
       this.floorMesh.material.map = this._floorTexturesByLevel[this.currentLevel];
       this.floorMesh.material.needsUpdate = true;
       const row = this._wallTexturesByLevel[this.currentLevel];
@@ -748,6 +777,8 @@ export class Arena {
         }
       }
     } else {
+      this.floorMesh.material.map = this.floorTexture;
+      this.floorMesh.material.needsUpdate = true;
       this.drawFloor(level);
     }
 
@@ -759,7 +790,11 @@ export class Arena {
 
     if (this.baseMesh) this.baseMesh.material.color.set(level.bg);
 
-    if (!this._isLevelPrebaked(this.currentLevel)) {
+    if (!this.liveLevelTexturesOnly && !this._isLevelPrebaked(this.currentLevel)) {
+      for (const m of this.wallDecals) {
+        m.plane.material.map = m.texture;
+        m.plane.material.needsUpdate = true;
+      }
       this.drawDiscoWalls(level);
     }
 

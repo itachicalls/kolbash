@@ -7,14 +7,24 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
-const MODEL_PATH = '/models/Dying.fbx';
 const TARGET_HEIGHT = 1.75;
+
+function disposeModelGraph(root) {
+  root.traverse((obj) => {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach((m) => m.dispose?.());
+    }
+  });
+}
 
 function pickDeathClip(animations) {
   if (!animations || animations.length === 0) return null;
   const lower = (n) => (n || '').toLowerCase();
   let clip =
     animations.find(a => lower(a.name).includes('dying')) ||
+    animations.find(a => lower(a.name).includes('falling')) ||
     animations.find(a => lower(a.name).includes('death')) ||
     animations.find(a => lower(a.name).includes('die')) ||
     animations[0];
@@ -22,7 +32,14 @@ function pickDeathClip(animations) {
 }
 
 export class DeathScene {
-  constructor() {
+  /**
+   * @param {{ skipSkinnedHero?: boolean; deferSkinned?: boolean }} [opts]
+   *   skipSkinnedHero: skip Dying.fbx — instant callback in start().
+   *   deferSkinned: split clone / mixer across frames (mobile tab survival).
+   */
+  constructor(opts = {}) {
+    this._skipSkinned = opts.skipSkinnedHero === true;
+    this._deferSkinned = opts.deferSkinned === true;
     this.loader = new FBXLoader();
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x030208);
@@ -47,6 +64,10 @@ export class DeathScene {
 
     this._cache = null;
     this._loading = null;
+    /** Current death FBX URL; swapped when the player picks another fighter. */
+    this._modelPath = '/models/Dying.fbx';
+    /** Reuse one skinned clone across deaths — avoids per-death SkeletonUtils.clone (mobile tab kills). */
+    this._modelPool = [];
     this.active = false;
     /** World XZ where death anim started — camera stays over this spot while she falls “in place”. */
     this._framingAnchor = new THREE.Vector3();
@@ -59,15 +80,55 @@ export class DeathScene {
     this._finished = false;
     this._maxTime = 12;
     this._elapsed = 0;
+    this._deathBootQueue = null;
+  }
+
+  /** Drop cached FBX so another fighter's death clip can load (frees VRAM). */
+  invalidateCache() {
+    if (this._cache?.fbx) {
+      try {
+        disposeModelGraph(this._cache.fbx);
+      } catch (e) {}
+      this._cache = null;
+    }
+    while (this._modelPool.length) {
+      const m = this._modelPool.pop();
+      if (m) {
+        try {
+          disposeModelGraph(m);
+        } catch (e) {}
+      }
+    }
+  }
+
+  /**
+   * @param {string} path absolute site path e.g. `/models/...`
+   */
+  async setModelPath(path) {
+    const next = String(path || '').trim() || '/models/Dying.fbx';
+    if (next === this._modelPath && this._cache) return;
+    if (this._loading) {
+      try {
+        await this._loading;
+      } catch (e) {}
+    }
+    this.invalidateCache();
+    this._modelPath = next;
   }
 
   preload() {
     if (this._cache) return Promise.resolve(this._cache);
     if (this._loading) return this._loading;
 
+    if (this._skipSkinned) {
+      this._cache = null;
+      return Promise.resolve(null);
+    }
+
+    const url = this._modelPath;
     this._loading = new Promise((resolve, reject) => {
       this.loader.load(
-        MODEL_PATH,
+        url,
         (fbx) => {
           let animations = fbx.animations || [];
           fbx.traverse((child) => {
@@ -76,13 +137,19 @@ export class DeathScene {
           const box = new THREE.Box3().setFromObject(fbx);
           const size = box.getSize(new THREE.Vector3());
           this._cache = { fbx, originalHeight: size.y || 1, animations };
+          try {
+            const warm = SkeletonUtils.clone(fbx);
+            if (this._modelPool.length < 1) this._modelPool.push(warm);
+          } catch (e) {
+            console.warn('DeathScene: pool warm clone failed', e);
+          }
           this._loading = null;
           resolve(this._cache);
         },
         undefined,
         (err) => {
           this._loading = null;
-          console.warn('DeathScene: failed to load', MODEL_PATH, err);
+          console.warn('DeathScene: failed to load', url, err);
           reject(err);
         }
       );
@@ -103,6 +170,7 @@ export class DeathScene {
     this._elapsed = 0;
     this._framingReady = false;
     this.active = true;
+    this._deathBootQueue = null;
 
     this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
@@ -115,7 +183,43 @@ export class DeathScene {
       return;
     }
 
-    const root = SkeletonUtils.clone(this._cache.fbx);
+    if (this._deferSkinned) {
+      this._deathBootQueue = [
+        () => {
+          const root = this._modelPool.length ? this._modelPool.pop() : SkeletonUtils.clone(this._cache.fbx);
+          this.model = root;
+          const h = this._cache.originalHeight || 1;
+          const scale = TARGET_HEIGHT / h;
+          root.scale.setScalar(scale);
+          const box = new THREE.Box3().setFromObject(root);
+          const minY = box.min.y;
+          root.position.set(0, -minY, 0);
+          root.rotation.y = deathYaw + Math.PI * 0.12;
+          this.scene.add(root);
+        },
+        () => {
+          const clip = pickDeathClip(this._cache.animations);
+          if (clip) {
+            this.clip = clip;
+            this.mixer = new THREE.AnimationMixer(this.model);
+            this.action = this.mixer.clipAction(clip);
+            this.action.reset();
+            this.action.setLoop(THREE.LoopOnce, 1);
+            this.action.clampWhenFinished = true;
+            this.action.play();
+            this._maxTime = Math.min(clip.duration + 1.8, 16);
+          } else {
+            this._maxTime = 3;
+          }
+          if (this.mixer) this.mixer.update(0.0001);
+          this._frameCameraAndSpot();
+        }
+      ];
+      renderer.setClearColor(0x030208, 1);
+      return;
+    }
+
+    const root = this._modelPool.length ? this._modelPool.pop() : SkeletonUtils.clone(this._cache.fbx);
     this.model = root;
 
     const h = this._cache.originalHeight || 1;
@@ -157,11 +261,17 @@ export class DeathScene {
     }
     this.action = null;
     this.clip = null;
+    const pooledCandidate = this.model;
+    this.model = null;
     for (let i = this.scene.children.length - 1; i >= 0; i--) {
       const ch = this.scene.children[i];
       if (ch.isLight) continue;
       if (ch === this.spotLight?.target) continue;
       this.scene.remove(ch);
+      if (pooledCandidate && ch === pooledCandidate && this._modelPool.length < 1) {
+        this._modelPool.push(ch);
+        continue;
+      }
       ch.traverse((obj) => {
         if (obj.geometry) obj.geometry.dispose();
         if (obj.material) {
@@ -170,7 +280,6 @@ export class DeathScene {
         }
       });
     }
-    this.model = null;
   }
 
   /**
@@ -230,6 +339,19 @@ export class DeathScene {
   update(renderer, delta) {
     if (!this.active) return false;
 
+    if (this._deathBootQueue?.length) {
+      const job = this._deathBootQueue.shift();
+      try {
+        job();
+      } catch (e) {
+        console.warn('DeathScene boot step', e);
+      }
+      if (this._deathBootQueue.length === 0) this._deathBootQueue = null;
+      renderer.setClearColor(0x030208, 1);
+      renderer.render(this.scene, this.camera);
+      return true;
+    }
+
     this._elapsed += delta;
     if (this.mixer) this.mixer.update(delta);
 
@@ -252,6 +374,7 @@ export class DeathScene {
   }
 
   stop() {
+    this._deathBootQueue = null;
     this._clearNonLights();
     this.active = false;
     this._onFinished = null;

@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "preview:lan": "vite preview --host 0.0.0.0",
-    "download-assets": "node scripts/downloadAssets.js"
+    "download-assets": "node scripts/downloadAssets.js",
+    "texture-report": "node scripts/fbx-texture-report.mjs"
   },
   "dependencies": {
     "three": "^0.160.0",
