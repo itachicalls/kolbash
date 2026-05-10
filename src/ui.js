@@ -116,7 +116,10 @@ export class UIManager {
       musicToggleBtn: document.getElementById('music-toggle-btn'),
 
       waveCountdownOverlay: document.getElementById('wave-countdown-overlay'),
-      waveCountdownDigit: document.getElementById('wave-countdown-digit')
+      waveCountdownDigit: document.getElementById('wave-countdown-digit'),
+
+      bossCutsceneOverlay: document.getElementById('boss-cutscene-overlay'),
+      bossCutsceneVideo: document.getElementById('boss-cutscene-video')
     };
 
     this.onSpecialActivate = null;
@@ -321,6 +324,89 @@ export class UIManager {
     el.classList.remove('wave-countdown-flash');
     void el.offsetWidth;
     el.classList.add('wave-countdown-flash');
+  }
+
+  /**
+   * Full-screen intro while `bossEncounter.begin()` decodes rig/FBX. Keeps overlay until both
+   * the boss load promise settles and the clip ends (or user skips / video errors).
+   * @param {Promise<void>} bossLoadPromise from BossEncounter.begin()
+   */
+  async runBossCutsceneWithBossLoad(bossLoadPromise) {
+    if (
+      typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      await bossLoadPromise;
+      return;
+    }
+
+    const overlay = this.elements.bossCutsceneOverlay;
+    const video = this.elements.bossCutsceneVideo;
+    if (!overlay || !video) {
+      await bossLoadPromise;
+      return;
+    }
+
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    video.currentTime = 0;
+
+    let finishVideo;
+    const videoDone = new Promise((resolve) => {
+      finishVideo = resolve;
+    });
+
+    const onEnded = () => finishVideo();
+    const onErr = () => finishVideo();
+    video.addEventListener('ended', onEnded, { once: true });
+    video.addEventListener('error', onErr, { once: true });
+
+    const skip = (e) => {
+      try {
+        e.preventDefault();
+      } catch (err) {}
+      finishVideo();
+    };
+    overlay.addEventListener('pointerup', skip, { once: true });
+    const escSkip = (e) => {
+      if (e.key === 'Escape' || e.key === ' ') {
+        try {
+          e.preventDefault();
+        } catch (err) {}
+        window.removeEventListener('keydown', escSkip, true);
+        finishVideo();
+      }
+    };
+    window.addEventListener('keydown', escSkip, true);
+
+    const playTry = async () => {
+      try {
+        await video.play();
+      } catch {
+        try {
+          video.muted = true;
+          await video.play();
+        } catch {
+          finishVideo();
+        }
+      }
+    };
+    void playTry();
+
+    try {
+      await Promise.all([bossLoadPromise, videoDone]);
+    } finally {
+      video.removeEventListener('ended', onEnded);
+      video.removeEventListener('error', onErr);
+      overlay.removeEventListener('pointerup', skip);
+      overlay.style.display = 'none';
+      overlay.setAttribute('aria-hidden', 'true');
+      try {
+        video.pause();
+      } catch (e) {}
+      window.removeEventListener('keydown', escSkip, true);
+    }
   }
 
   updateHealth(current, max) {

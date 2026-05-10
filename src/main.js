@@ -1378,10 +1378,16 @@ class Game {
         if (bossAfter && serial === this._waveCountdownSerial && this.isRunning && !this.player.isDead) {
           this._pendingBossAfterDare = false;
           try {
-            await this.bossEncounter.begin();
-            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-            if (this.isRunning && !this.player.isDead) {
-              this.gameMusic?.enterBossFight();
+            const bossLoad = this.bossEncounter.begin();
+            await this.ui.runBossCutsceneWithBossLoad(bossLoad);
+            if (serial !== this._waveCountdownSerial || !this.isRunning || this.player.isDead) {
+              this.bossEncounter.reset();
+              this.gameMusic?.leaveBossFight();
+            } else {
+              await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+              if (this.isRunning && !this.player.isDead) {
+                this.gameMusic?.enterBossFight();
+              }
             }
           } catch (err) {
             console.warn('[KOL BASH] Boss begin failed', err);

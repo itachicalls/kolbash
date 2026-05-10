@@ -810,6 +810,30 @@
       100% { transform: scale(1); opacity: 1; }
     }
 
+    /* ===== BOSS INTRO CUTSCENE (video masks FBX decode / hitch) ===== */
+    #boss-cutscene-overlay {
+      position: fixed; inset: 0; z-index: 1200;
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      background: #030008; pointer-events: auto;
+    }
+    #boss-cutscene-overlay .boss-cutscene-video {
+      width: 100%; height: 100%; max-height: 100vh;
+      object-fit: contain;
+      background: #000;
+    }
+    #boss-cutscene-overlay .boss-cutscene-hint {
+      position: absolute; bottom: max(1rem, env(safe-area-inset-bottom));
+      left: 50%; transform: translateX(-50%);
+      font-family: 'Rajdhani', sans-serif; font-size: 0.9rem;
+      letter-spacing: 0.25em; color: rgba(255, 200, 255, 0.75);
+      text-shadow: 0 0 12px rgba(255, 0, 200, 0.5);
+      pointer-events: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #boss-cutscene-overlay { background: #030008; }
+      #boss-cutscene-overlay .boss-cutscene-video { display: none; }
+    }
+
     /* ===== DARE SCREEN ===== */
     #dare-screen {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -1472,6 +1496,14 @@
   <div id="wave-countdown-overlay" style="display: none;" aria-hidden="true">
     <div class="wave-countdown-glow" aria-hidden="true"></div>
     <div id="wave-countdown-digit">3</div>
+  </div>
+
+  <div id="boss-cutscene-overlay" style="display: none;" aria-hidden="true">
+    <video id="boss-cutscene-video" class="boss-cutscene-video" playsinline preload="metadata" disablepictureinpicture>
+      <source src="/video/boss-cutscene.mov" type="video/quicktime" />
+      <source src="/video/boss-cutscene.mp4" type="video/mp4" />
+    </video>
+    <div class="boss-cutscene-hint">TAP TO SKIP</div>
   </div>
 
   <!-- Dare Screen (between waves) -->
