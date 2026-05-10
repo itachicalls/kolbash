@@ -349,8 +349,7 @@ export class UIManager {
   }
 
   /**
-   * Cinematic intro + masked boss FBX load. Pre-roll titles, then crossfade to video with audio.
-   * Exit: opacity fade back to gameplay (not a hard cut).
+   * Finale cutscene: video (no intro title card) → bridge → fade → 3-2-1 in main.js.
    * @param {Promise<void>} bossLoadPromise from BossEncounter.begin()
    * @param {{ mp4: string; mov: string }} [introClip] per-fighter paths (`getFinaleBossIntroClip`)
    */
@@ -380,15 +379,35 @@ export class UIManager {
     };
 
     const fadeOutOverlay = async () => {
+      const vidWrap = overlay.querySelector('.boss-cutscene-vid-wrap');
+      if (hint) {
+        hint.style.opacity = '0';
+        hint.style.transition = 'opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1)';
+      }
+      if (vidWrap) vidWrap.classList.add('boss-cutscene-vid-wrap--exit');
+      await sleep(320);
       overlay.classList.add('boss-cutscene-overlay--exit');
-      await sleep(780);
+      await sleep(620);
     };
 
     resumeSharedAudioContext();
 
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
-    overlay.classList.remove('boss-cutscene-overlay--exit', 'is-video-phase');
+    overlay.classList.remove('boss-cutscene-overlay--exit', 'is-video-phase', 'is-bridge-phase');
+    const prerollEl = overlay.querySelector('.boss-cutscene-preroll');
+    if (prerollEl) {
+      prerollEl.style.visibility = '';
+      prerollEl.style.opacity = '';
+      prerollEl.style.transition = '';
+      prerollEl.style.display = '';
+    }
+    if (hint) {
+      hint.style.opacity = '';
+      hint.style.transition = '';
+    }
+    const vidWrapEl = overlay.querySelector('.boss-cutscene-vid-wrap');
+    if (vidWrapEl) vidWrapEl.classList.remove('boss-cutscene-vid-wrap--exit');
 
     video.pause();
     video.playsInline = true;
@@ -399,6 +418,7 @@ export class UIManager {
     video.muted = true;
 
     let finishVideo;
+    let skipRequested = false;
     const videoDone = new Promise((resolve) => {
       finishVideo = resolve;
     });
@@ -421,6 +441,7 @@ export class UIManager {
       try {
         e.preventDefault();
       } catch (err) {}
+      skipRequested = true;
       maybeFinish();
     };
     overlay.addEventListener('pointerup', onPointerUp);
@@ -430,6 +451,7 @@ export class UIManager {
         try {
           e.preventDefault();
         } catch (err) {}
+        skipRequested = true;
         maybeFinish();
       }
     };
@@ -485,28 +507,41 @@ export class UIManager {
 
     try {
       video.load();
+      overlay.classList.add('is-video-phase');
+      if (prerollEl) prerollEl.style.display = 'none';
+      setHint('ESC OR CLICK TO SKIP');
+
+      let loadFailed = false;
       try {
         await waitCanPlay();
       } catch {
+        loadFailed = true;
         setHint('CLIP FAILED TO LOAD — ESC OR CLICK');
       }
 
-      await video.play().catch(() => {});
+      try {
+        video.pause();
+        video.currentTime = 0;
+      } catch (e) {}
 
-      await sleep(1480);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-      overlay.classList.add('is-video-phase');
-      setHint('ESC OR CLICK TO SKIP');
+      try {
+        video.currentTime = 0;
+      } catch (e) {}
 
-      await sleep(580);
-
-      await tryUnmutedPlayback();
+      if (!skipRequested && !loadFailed) {
+        await tryUnmutedPlayback();
+      }
     } catch (e) {
       console.warn('[KOL BASH] Cutscene play', e);
     }
 
     try {
-      await Promise.all([bossLoadPromise, videoDone]);
+      await videoDone;
+      overlay.classList.add('is-bridge-phase');
+      const minBridgeMs = skipRequested ? 220 : 480;
+      await Promise.all([bossLoadPromise, sleep(minBridgeMs)]);
     } finally {
       video.removeEventListener('ended', onEnded);
       overlay.removeEventListener('pointerup', onPointerUp);
@@ -520,8 +555,15 @@ export class UIManager {
 
       overlay.style.display = 'none';
       overlay.setAttribute('aria-hidden', 'true');
-      overlay.classList.remove('boss-cutscene-overlay--exit', 'is-video-phase');
+      overlay.classList.remove('boss-cutscene-overlay--exit', 'is-video-phase', 'is-bridge-phase');
+      const vw = overlay.querySelector('.boss-cutscene-vid-wrap');
+      if (vw) vw.classList.remove('boss-cutscene-vid-wrap--exit');
+      if (hint) {
+        hint.style.opacity = '';
+        hint.style.transition = '';
+      }
     }
+
   }
 
   updateHealth(current, max) {

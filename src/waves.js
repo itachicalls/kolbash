@@ -11,10 +11,10 @@ export const REGULAR_WAVES = LEVELS.length * 2;
 export const TOTAL_WAVES = REGULAR_WAVES;
 
 /**
- * After clearing this wave, dare/store → countdown starts the finale boss.
- * Use `REGULAR_WAVES` for endgame finale; lower values are for faster local/Pages QA.
+ * After clearing this wave, dare/store → countdown starts the finale boss + cutscene.
+ * For faster QA, temporarily lower this (e.g. `1`) in a local branch.
  */
-export const BOSS_TRIGGER_AFTER_WAVE = 1;
+export const BOSS_TRIGGER_AFTER_WAVE = REGULAR_WAVES;
 
 const WAVE_TAUNTS = [
   "WARM UP IS OVER",

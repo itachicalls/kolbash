@@ -1349,18 +1349,49 @@ class Game {
 
       let wavePrimed = false;
       let bossAfter = false;
+      /** When finale boss path: if false after cutscene / begin, skip post-cutscene countdown + announcement. */
+      let bossFlowContinue = true;
       try {
         if (serial !== this._waveCountdownSerial) return;
         bossAfter = this._pendingBossAfterDare;
-        this.ui.showWaveCountdown();
         if (!this.isRunning || this.player.isDead) return;
 
-        if (!bossAfter) {
+        if (bossAfter) {
+          this._pendingBossAfterDare = false;
+          try {
+            this.gameMusic?.pauseBedForCutscene();
+            const bossLoad = this.bossEncounter.begin();
+            const introClip = getFinaleBossIntroClip(this.selectedCharacterId);
+            await this.ui.runBossCutsceneWithBossLoad(bossLoad, introClip);
+            if (serial !== this._waveCountdownSerial || !this.isRunning || this.player.isDead) {
+              this.bossEncounter.reset();
+              this.gameMusic?.leaveBossFight();
+              bossFlowContinue = false;
+            }
+          } catch (err) {
+            console.warn('[KOL BASH] Boss begin failed', err);
+            this.gameMusic?.leaveBossFight();
+            this.bossEncounter.reset();
+            bossFlowContinue = false;
+          }
+        } else {
           this.waveManager.startNextWave(this.player.getPosition(), { deferAnnouncement: true });
           wavePrimed = true;
           this.ui.updateWave(this.waveManager.currentWave);
           this.ui.updateLevelName(this.arena.getLevelName());
         }
+
+        if (!bossFlowContinue) return;
+
+        if (bossAfter) {
+          resumeSharedAudioContext();
+          this.waveManager.combatHoldActive = true;
+        }
+
+        if (serial !== this._waveCountdownSerial) return;
+        if (!this.isRunning || this.player.isDead) return;
+
+        this.ui.showWaveCountdown();
 
         for (const n of [3, 2, 1]) {
           if (serial !== this._waveCountdownSerial) return;
@@ -1375,37 +1406,17 @@ class Game {
         this.waveManager.playCountdownGo();
         await sleep(goMs);
 
-        if (bossAfter) resumeSharedAudioContext();
-
         if (bossAfter && serial === this._waveCountdownSerial && this.isRunning && !this.player.isDead) {
-          this._pendingBossAfterDare = false;
-          try {
-            this.gameMusic?.pauseBedForCutscene();
-            const bossLoad = this.bossEncounter.begin();
-            const introClip = getFinaleBossIntroClip(this.selectedCharacterId);
-            await this.ui.runBossCutsceneWithBossLoad(bossLoad, introClip);
-            if (serial !== this._waveCountdownSerial || !this.isRunning || this.player.isDead) {
-              this.bossEncounter.reset();
-              this.gameMusic?.leaveBossFight();
-            } else {
-              await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-              if (this.isRunning && !this.player.isDead) {
-                this.gameMusic?.enterBossFight();
-              }
-            }
-          } catch (err) {
-            console.warn('[KOL BASH] Boss begin failed', err);
-            this.gameMusic?.leaveBossFight();
-            this.bossEncounter.reset();
-          }
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
           if (this.isRunning && !this.player.isDead) {
-            this.ui.showWaveAnnouncement(
-              BOSS_TRIGGER_AFTER_WAVE,
-              'FINALE — HE OWNS THE WALLS',
-              this.arena.getLevelName(),
-              false
-            );
+            this.gameMusic?.enterBossFight();
           }
+          this.ui.showWaveAnnouncement(
+            BOSS_TRIGGER_AFTER_WAVE,
+            'FINALE — HE OWNS THE WALLS',
+            this.arena.getLevelName(),
+            false
+          );
         }
       } finally {
         if (serial === this._waveCountdownSerial) {
@@ -1416,6 +1427,8 @@ class Game {
             this.waveManager.releaseDeferredWaveStart({ silent: !ok });
           } else if (this.isRunning && !this.player.isDead && !bossAfter) {
             this.waveManager.startNextWave(this.player.getPosition());
+          } else if (bossAfter && this.waveManager) {
+            this.waveManager.combatHoldActive = false;
           }
           this.player.inputFrozen = false;
         }
@@ -1895,6 +1908,7 @@ class Game {
 
   handleArenaTraps(playerPos) {
     if (this.specialAttackActive) return;
+    if (this._waveCountdownRunning) return;
     if (this.waveManager?.combatHoldActive) return;
     if (!this.arena || !this.isRunning) return;
     const now = performance.now();
@@ -1907,6 +1921,7 @@ class Game {
 
   handleEnemyDamage(playerPos) {
     if (this.specialAttackActive) return;
+    if (this._waveCountdownRunning) return;
     if (this.waveManager?.combatHoldActive) return;
     const now = performance.now();
     const px = playerPos.x, pz = playerPos.z;

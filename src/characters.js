@@ -87,7 +87,7 @@ export const CHARACTER_ROSTER = [
     dossier:
       'Chad was mid-podcast on “alpha acoustics” at a Trenchville rooftop gym when the Doctor’s mind-control anthem rolled across the skyline. Every lifter below synced into the same creepy smile-and-sway — except Chad, who assumed the bass was jealous of his calves. Once he realized the city wasn’t admiring him organically, he vowed to deadlift the frequency off the airwaves and restore honest, obnoxious free will.',
     cinematic: {
-      /** Uses Timmy reel as placeholder until Chad-specific finale clip exists. */
+      /** Finale intro before boss; MP4 first in browser. Files under `public/video/finale-cutscene/`. */
       bossIntroClip: {
         mp4: '/video/finale-cutscene/chad.mp4',
         mov: '/video/finale-cutscene/chad.mov'
