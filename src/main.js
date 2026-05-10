@@ -1378,6 +1378,7 @@ class Game {
         if (bossAfter && serial === this._waveCountdownSerial && this.isRunning && !this.player.isDead) {
           this._pendingBossAfterDare = false;
           try {
+            this.gameMusic?.pauseBedForCutscene();
             const bossLoad = this.bossEncounter.begin();
             await this.ui.runBossCutsceneWithBossLoad(bossLoad);
             if (serial !== this._waveCountdownSerial || !this.isRunning || this.player.isDead) {

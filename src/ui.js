@@ -328,7 +328,8 @@ export class UIManager {
 
   /**
    * Full-screen intro while `bossEncounter.begin()` decodes rig/FBX. Keeps overlay until both
-   * the boss load promise settles and the clip ends (or user skips / video errors).
+   * the boss load promise settles and the clip ends (or user skips / decode failure + skip).
+   * Muted autoplay + first tap unmutes (browser policy); further tap skips. Esc always skips.
    * @param {Promise<void>} bossLoadPromise from BossEncounter.begin()
    */
   async runBossCutsceneWithBossLoad(bossLoadPromise) {
@@ -343,14 +344,24 @@ export class UIManager {
 
     const overlay = this.elements.bossCutsceneOverlay;
     const video = this.elements.bossCutsceneVideo;
+    const hint = overlay?.querySelector?.('.boss-cutscene-hint') || null;
     if (!overlay || !video) {
       await bossLoadPromise;
       return;
     }
 
+    const setHint = (t) => {
+      if (hint) hint.textContent = t;
+    };
+
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.setAttribute('webkit-playsinline', '');
     video.currentTime = 0;
+    setHint('TAP FOR SOUND · TAP AGAIN TO SKIP · ESC TO SKIP');
 
     let finishVideo;
     const videoDone = new Promise((resolve) => {
@@ -358,54 +369,105 @@ export class UIManager {
     });
 
     const onEnded = () => finishVideo();
-    const onErr = () => finishVideo();
     video.addEventListener('ended', onEnded, { once: true });
-    video.addEventListener('error', onErr, { once: true });
 
-    const skip = (e) => {
+    video.addEventListener(
+      'error',
+      () => {
+        setHint('CUTSCENE UNAVAILABLE — ADD /video/boss-cutscene.mp4 (H.264) · ESC TO CONTINUE');
+        console.warn('[KOL BASH] Cutscene video error', video.error);
+      },
+      { once: true }
+    );
+
+    const maybeFinish = () => finishVideo();
+
+    const onPointerUp = (e) => {
       try {
         e.preventDefault();
       } catch (err) {}
-      finishVideo();
+      if (video.error) {
+        maybeFinish();
+        return;
+      }
+      if (video.muted) {
+        video.muted = false;
+        setHint('TAP TO SKIP · ESC TO SKIP');
+        void video.play().catch(() => {
+          video.muted = true;
+          setHint('AUDIO BLOCKED — TAP TO SKIP');
+        });
+        return;
+      }
+      maybeFinish();
     };
-    overlay.addEventListener('pointerup', skip, { once: true });
+    overlay.addEventListener('pointerup', onPointerUp);
+
     const escSkip = (e) => {
       if (e.key === 'Escape' || e.key === ' ') {
         try {
           e.preventDefault();
         } catch (err) {}
-        window.removeEventListener('keydown', escSkip, true);
-        finishVideo();
+        maybeFinish();
       }
     };
     window.addEventListener('keydown', escSkip, true);
 
-    const playTry = async () => {
+    const waitCanPlay = () =>
+      new Promise((resolve, reject) => {
+        if (video.readyState >= 3) {
+          resolve();
+          return;
+        }
+        const to = window.setTimeout(() => reject(new Error('cutscene_timeout')), 14000);
+        const done = () => {
+          window.clearTimeout(to);
+          resolve();
+        };
+        video.addEventListener('canplay', done, { once: true });
+        video.addEventListener(
+          'error',
+          () => {
+            window.clearTimeout(to);
+            reject(new Error('cutscene_error'));
+          },
+          { once: true }
+        );
+      });
+
+    try {
+      video.load();
+      try {
+        await waitCanPlay();
+      } catch {
+        setHint('CUTSCENE FAILED TO LOAD — ESC OR TAP TO CONTINUE');
+      }
+
       try {
         await video.play();
       } catch {
         try {
-          video.muted = true;
           await video.play();
         } catch {
-          finishVideo();
+          setHint('TAP TO PLAY / SKIP · ESC TO SKIP');
         }
       }
-    };
-    void playTry();
+    } catch (e) {
+      console.warn('[KOL BASH] Cutscene play', e);
+    }
 
     try {
       await Promise.all([bossLoadPromise, videoDone]);
     } finally {
       video.removeEventListener('ended', onEnded);
-      video.removeEventListener('error', onErr);
-      overlay.removeEventListener('pointerup', skip);
+      overlay.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('keydown', escSkip, true);
       overlay.style.display = 'none';
       overlay.setAttribute('aria-hidden', 'true');
       try {
         video.pause();
       } catch (e) {}
-      window.removeEventListener('keydown', escSkip, true);
+      video.muted = true;
     }
   }
 

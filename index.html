@@ -813,12 +813,17 @@
     /* ===== BOSS INTRO CUTSCENE (video masks FBX decode / hitch) ===== */
     #boss-cutscene-overlay {
       position: fixed; inset: 0; z-index: 1200;
-      display: none; flex-direction: column; align-items: center; justify-content: center;
+      display: none; flex-direction: column; align-items: stretch; justify-content: center;
       background: #030008; pointer-events: auto;
     }
     #boss-cutscene-overlay .boss-cutscene-video {
-      width: 100%; height: 100%; max-height: 100vh;
+      flex: 1 1 auto;
+      width: 100%;
+      min-width: 0;
+      min-height: 40vh;
+      max-height: min(100vh, 100dvh);
       object-fit: contain;
+      object-position: center;
       background: #000;
     }
     #boss-cutscene-overlay .boss-cutscene-hint {
@@ -1499,11 +1504,12 @@
   </div>
 
   <div id="boss-cutscene-overlay" style="display: none;" aria-hidden="true">
-    <video id="boss-cutscene-video" class="boss-cutscene-video" playsinline preload="metadata" disablepictureinpicture>
-      <source src="/video/boss-cutscene.mov" type="video/quicktime" />
+    <!-- MP4 (H.264) first for Chrome/Edge/Firefox; .mov often only works in Safari. Add public/video/boss-cutscene.mp4 -->
+    <video id="boss-cutscene-video" class="boss-cutscene-video" playsinline webkit-playsinline preload="auto" disablepictureinpicture>
       <source src="/video/boss-cutscene.mp4" type="video/mp4" />
+      <source src="/video/boss-cutscene.mov" type="video/quicktime" />
     </video>
-    <div class="boss-cutscene-hint">TAP TO SKIP</div>
+    <div class="boss-cutscene-hint">TAP FOR SOUND · TAP AGAIN TO SKIP · ESC TO SKIP</div>
   </div>
 
   <!-- Dare Screen (between waves) -->

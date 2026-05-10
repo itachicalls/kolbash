@@ -68,6 +68,14 @@ export class GameMusic {
     this._applyMainLevelBed();
   }
 
+  /** Pause background bed so another element (e.g. cutscene video) can use audio. */
+  pauseBedForCutscene() {
+    if (!this._started) return;
+    try {
+      this.audio.pause();
+    } catch (e) {}
+  }
+
   /** Swap to boss fight bed while a run is active (call after `start()`). */
   enterBossFight() {
     if (!this._started) return;
