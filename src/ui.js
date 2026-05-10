@@ -4,6 +4,7 @@
 
 import { TOTAL_WAVES, REGULAR_WAVES, BOSS_TRIGGER_AFTER_WAVE } from './waves.js';
 import { SPECIAL_CHARGE_KILLS } from './special-attack.js';
+import { resumeSharedAudioContext } from './shared-audio.js';
 
 export const STORE_ITEMS = [
   { id: 'gatling', name: 'GATLING GUN', cost: 200, type: 'weapon', desc: 'Rapid bullet storm' },
@@ -41,6 +42,10 @@ const DARE_MESSAGES = [
   "CUTE. NOW TRY A REAL WAVE.",
   "THAT WAS THE WARM-UP, CHAMP."
 ];
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 export class UIManager {
   constructor() {
@@ -327,9 +332,8 @@ export class UIManager {
   }
 
   /**
-   * Full-screen intro while `bossEncounter.begin()` decodes rig/FBX. Keeps overlay until both
-   * the boss load promise settles and the clip ends (or user skips / decode failure + skip).
-   * Muted autoplay + first tap unmutes (browser policy); further tap skips. Esc always skips.
+   * Cinematic intro + masked boss FBX load. Pre-roll titles, then crossfade to video with audio.
+   * Exit: opacity fade back to gameplay (not a hard cut).
    * @param {Promise<void>} bossLoadPromise from BossEncounter.begin()
    */
   async runBossCutsceneWithBossLoad(bossLoadPromise) {
@@ -354,14 +358,24 @@ export class UIManager {
       if (hint) hint.textContent = t;
     };
 
+    const fadeOutOverlay = async () => {
+      overlay.classList.add('boss-cutscene-overlay--exit');
+      await sleep(780);
+    };
+
+    resumeSharedAudioContext();
+
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
-    video.muted = true;
+    overlay.classList.remove('boss-cutscene-overlay--exit', 'is-video-phase');
+
+    video.pause();
     video.playsInline = true;
     video.setAttribute('playsinline', '');
     video.setAttribute('webkit-playsinline', '');
+    video.volume = 1;
     video.currentTime = 0;
-    setHint('TAP FOR SOUND · TAP AGAIN TO SKIP · ESC TO SKIP');
+    video.muted = true;
 
     let finishVideo;
     const videoDone = new Promise((resolve) => {
@@ -374,7 +388,7 @@ export class UIManager {
     video.addEventListener(
       'error',
       () => {
-        setHint('CUTSCENE UNAVAILABLE — ADD /video/boss-cutscene.mp4 (H.264) · ESC TO CONTINUE');
+        setHint('CLIP ERROR — ESC / CLICK TO CONTINUE');
         console.warn('[KOL BASH] Cutscene video error', video.error);
       },
       { once: true }
@@ -386,19 +400,6 @@ export class UIManager {
       try {
         e.preventDefault();
       } catch (err) {}
-      if (video.error) {
-        maybeFinish();
-        return;
-      }
-      if (video.muted) {
-        video.muted = false;
-        setHint('TAP TO SKIP · ESC TO SKIP');
-        void video.play().catch(() => {
-          video.muted = true;
-          setHint('AUDIO BLOCKED — TAP TO SKIP');
-        });
-        return;
-      }
       maybeFinish();
     };
     overlay.addEventListener('pointerup', onPointerUp);
@@ -419,7 +420,7 @@ export class UIManager {
           resolve();
           return;
         }
-        const to = window.setTimeout(() => reject(new Error('cutscene_timeout')), 14000);
+        const to = window.setTimeout(() => reject(new Error('cutscene_timeout')), 16000);
         const done = () => {
           window.clearTimeout(to);
           resolve();
@@ -435,23 +436,50 @@ export class UIManager {
         );
       });
 
+    const tryUnmutedPlayback = async () => {
+      resumeSharedAudioContext();
+      video.volume = 1;
+      video.muted = false;
+      try {
+        await video.play();
+        return;
+      } catch {
+        /* fall through */
+      }
+      video.muted = true;
+      try {
+        await video.play();
+      } catch {
+        return;
+      }
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      video.muted = false;
+      try {
+        await video.play();
+      } catch {
+        video.muted = true;
+        await video.play().catch(() => {});
+      }
+    };
+
     try {
       video.load();
       try {
         await waitCanPlay();
       } catch {
-        setHint('CUTSCENE FAILED TO LOAD — ESC OR TAP TO CONTINUE');
+        setHint('CLIP FAILED TO LOAD — ESC OR CLICK');
       }
 
-      try {
-        await video.play();
-      } catch {
-        try {
-          await video.play();
-        } catch {
-          setHint('TAP TO PLAY / SKIP · ESC TO SKIP');
-        }
-      }
+      await video.play().catch(() => {});
+
+      await sleep(1480);
+
+      overlay.classList.add('is-video-phase');
+      setHint('ESC OR CLICK TO SKIP');
+
+      await sleep(580);
+
+      await tryUnmutedPlayback();
     } catch (e) {
       console.warn('[KOL BASH] Cutscene play', e);
     }
@@ -462,12 +490,16 @@ export class UIManager {
       video.removeEventListener('ended', onEnded);
       overlay.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('keydown', escSkip, true);
-      overlay.style.display = 'none';
-      overlay.setAttribute('aria-hidden', 'true');
       try {
         video.pause();
       } catch (e) {}
       video.muted = true;
+
+      await fadeOutOverlay();
+
+      overlay.style.display = 'none';
+      overlay.setAttribute('aria-hidden', 'true');
+      overlay.classList.remove('boss-cutscene-overlay--exit', 'is-video-phase');
     }
   }
 

@@ -1375,6 +1375,8 @@ class Game {
         this.waveManager.playCountdownGo();
         await sleep(goMs);
 
+        if (bossAfter) resumeSharedAudioContext();
+
         if (bossAfter && serial === this._waveCountdownSerial && this.isRunning && !this.player.isDead) {
           this._pendingBossAfterDare = false;
           try {
