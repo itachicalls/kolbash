@@ -2,7 +2,7 @@
  * UI System - HUD, wave announcements, level effects, store, dare screen
  */
 
-import { TOTAL_WAVES } from './waves.js';
+import { TOTAL_WAVES, REGULAR_WAVES, BOSS_TRIGGER_AFTER_WAVE } from './waves.js';
 import { SPECIAL_CHARGE_KILLS } from './special-attack.js';
 
 export const STORE_ITEMS = [
@@ -52,12 +52,24 @@ export class UIManager {
       hudTouchLayer: document.getElementById('hud-touch-layer'),
       gameOver: document.getElementById('game-over'),
       gameRetryBtn: document.getElementById('game-retry-btn'),
+      gameMainMenuBtn: document.getElementById('game-main-menu-btn'),
+      gameChangeFighterBtn: document.getElementById('game-change-fighter-btn'),
+
+      pauseMenu: document.getElementById('pause-menu'),
+      pauseResumeBtn: document.getElementById('pause-resume-btn'),
+      pauseQuitBtn: document.getElementById('pause-quit-btn'),
 
       healthBar: document.getElementById('health-bar'),
       healthText: document.getElementById('health-text'),
+      staminaBar: document.getElementById('stamina-bar'),
+      staminaBarBg: document.getElementById('stamina-bar-bg'),
       coinCount: document.getElementById('coin-count'),
       scoreValue: document.getElementById('score-value'),
       waveNumber: document.getElementById('wave-number'),
+      bossEncounterHud: document.getElementById('boss-encounter-hud'),
+      bossEncounterTitle: document.getElementById('boss-encounter-title'),
+      bossEncounterSub: document.getElementById('boss-encounter-sub'),
+      bossEncounterHpFill: document.getElementById('boss-encounter-hp-fill'),
       killsValue: document.getElementById('kills-value'),
       damageValue: document.getElementById('damage-value'),
       levelName: document.getElementById('level-name'),
@@ -83,6 +95,7 @@ export class UIManager {
       dareWaveCleared: document.getElementById('dare-wave-cleared'),
       dareContinue: document.getElementById('dare-continue'),
       dareStore: document.getElementById('dare-store'),
+      dareBailBtn: document.getElementById('dare-bail-btn'),
 
       storeScreen: document.getElementById('store-screen'),
       storeCoins: document.getElementById('store-coins-value'),
@@ -164,7 +177,11 @@ export class UIManager {
   showStartScreen() { this.setVisibility('start'); }
   showGame() { this.setVisibility('game'); }
 
-  showGameOver(stats, onRetry) {
+  /**
+   * @param {object} stats
+   * @param {(() => void) | { onRetry?: () => void; onMainMenu?: () => void; onChangeCharacter?: () => void }} callbacks
+   */
+  showGameOver(stats, callbacks) {
     this.setVisibility('gameover');
     if (this.elements.finalWave) this.elements.finalWave.textContent = stats.wave;
     if (this.elements.finalScore) this.elements.finalScore.textContent = stats.score.toLocaleString();
@@ -172,13 +189,59 @@ export class UIManager {
     if (this.elements.finalDamage) this.elements.finalDamage.textContent = (stats.damageDealt ?? 0).toLocaleString();
     if (this.elements.finalCoins) this.elements.finalCoins.textContent = stats.coins.toLocaleString();
 
-    const btn = this.elements.gameRetryBtn;
-    if (btn && onRetry) {
-      const clone = btn.cloneNode(true);
-      btn.replaceWith(clone);
-      this.elements.gameRetryBtn = document.getElementById('game-retry-btn');
-      bindPrimaryPointerUpOnce(this.elements.gameRetryBtn, () => onRetry());
+    let onRetry;
+    let onMainMenu;
+    let onChangeCharacter;
+    if (typeof callbacks === 'function') {
+      onRetry = callbacks;
+    } else if (callbacks && typeof callbacks === 'object') {
+      onRetry = callbacks.onRetry;
+      onMainMenu = callbacks.onMainMenu;
+      onChangeCharacter = callbacks.onChangeCharacter;
     }
+
+    const wire = (id, handler) => {
+      const el = document.getElementById(id);
+      if (!el || typeof handler !== 'function') return el;
+      const clone = el.cloneNode(true);
+      el.replaceWith(clone);
+      bindPrimaryPointerUpOnce(clone, () => handler());
+      return clone;
+    };
+
+    this.elements.gameRetryBtn = wire('game-retry-btn', onRetry);
+    this.elements.gameMainMenuBtn = wire('game-main-menu-btn', onMainMenu);
+    this.elements.gameChangeFighterBtn = wire('game-change-fighter-btn', onChangeCharacter);
+  }
+
+  showPauseMenu(onResume, onQuitToTitle) {
+    const root = this.elements.pauseMenu;
+    if (!root) return;
+    root.style.display = 'flex';
+    root.setAttribute('aria-hidden', 'false');
+
+    const resumeEl = document.getElementById('pause-resume-btn');
+    if (resumeEl && typeof onResume === 'function') {
+      const clone = resumeEl.cloneNode(true);
+      resumeEl.replaceWith(clone);
+      this.elements.pauseResumeBtn = document.getElementById('pause-resume-btn');
+      bindPrimaryPointerUpOnce(this.elements.pauseResumeBtn, () => onResume());
+    }
+
+    const quitEl = document.getElementById('pause-quit-btn');
+    if (quitEl && typeof onQuitToTitle === 'function') {
+      const clone = quitEl.cloneNode(true);
+      quitEl.replaceWith(clone);
+      this.elements.pauseQuitBtn = document.getElementById('pause-quit-btn');
+      bindPrimaryPointerUpOnce(this.elements.pauseQuitBtn, () => onQuitToTitle());
+    }
+  }
+
+  hidePauseMenu() {
+    const root = this.elements.pauseMenu;
+    if (!root) return;
+    root.style.display = 'none';
+    root.setAttribute('aria-hidden', 'true');
   }
 
   updateStats(kills, damageDealt) {
@@ -208,13 +271,17 @@ export class UIManager {
 
     if (screen !== 'game') {
       this.hideWaveCountdown();
+      this.hidePauseMenu();
       if (this.elements.specialVortexOrb) {
         this.elements.specialVortexOrb.style.display = 'none';
         this.elements.specialVortexOrb.classList.remove('special-vortex-ready');
       }
       if (this.elements.musicToggleBtn) this.elements.musicToggleBtn.style.display = 'none';
-    } else     if (this.elements.musicToggleBtn) {
-      this.elements.musicToggleBtn.style.display = 'flex';
+    } else {
+      this.hidePauseMenu();
+      if (this.elements.musicToggleBtn) {
+        this.elements.musicToggleBtn.style.display = 'flex';
+      }
     }
 
     const startBgVideo = document.getElementById('start-bg-video');
@@ -269,6 +336,19 @@ export class UIManager {
     if (this.elements.healthText) this.elements.healthText.textContent = `${Math.ceil(current)} / ${max}`;
   }
 
+  updateStamina(current, max, boosting) {
+    const percent = Math.max(0, Math.min(100, (current / max) * 100));
+    if (this.elements.staminaBar) {
+      this.elements.staminaBar.style.width = `${percent}%`;
+      this.elements.staminaBar.style.background = boosting
+        ? 'linear-gradient(90deg, #00ffff, #ff66ff)'
+        : 'linear-gradient(90deg, #0088cc, #8866cc)';
+    }
+    if (this.elements.staminaBarBg) {
+      this.elements.staminaBarBg.classList.toggle('stamina-boosting', !!boosting);
+    }
+  }
+
   updateCoins(count) {
     const el = this.elements.coinCount;
     if (!el) return;
@@ -294,6 +374,48 @@ export class UIManager {
     if (this.elements.waveNumber) {
       this.elements.waveNumber.textContent = `${wave} / ${TOTAL_WAVES}`;
     }
+  }
+
+  /** @param {{ phase: string; hpPct: number; windowSec: number }} payload */
+  setBossEncounterHud(payload) {
+    const wrap = this.elements.bossEncounterHud;
+    if (!wrap) return;
+    wrap.style.display = 'flex';
+    const title = this.elements.bossEncounterTitle;
+    const sub = this.elements.bossEncounterSub;
+    const fill = this.elements.bossEncounterHpFill;
+    if (title) {
+      if (payload.phase === 'intro') title.textContent = 'FINALE // SOMETHING OUTSIDE';
+      else if (payload.phase === 'adds') title.textContent = 'CLEAR THE DANCE FLOOR';
+      else if (payload.phase === 'vulnerable') title.textContent = 'NOW — HURT THE BOSS';
+      else if (payload.phase === 'dead') title.textContent = 'DISCO TITAN DOWN';
+      else title.textContent = 'BOSS';
+    }
+    if (sub) {
+      if (payload.phase === 'vulnerable' && payload.windowSec > 0) {
+        sub.textContent = `Damage window · ${payload.windowSec.toFixed(1)}s`;
+      } else if (payload.phase === 'adds') {
+        sub.textContent = 'Boss is shielded until every raver falls';
+      } else if (payload.phase === 'intro') {
+        sub.textContent = 'He has been watching through the wall';
+      } else {
+        sub.textContent = '';
+      }
+    }
+    if (fill) {
+      const w = Math.max(0, Math.min(1, payload.hpPct ?? 1));
+      fill.style.transform = `scaleX(${w})`;
+    }
+    if (this.elements.waveNumber) {
+      this.elements.waveNumber.textContent =
+        payload.phase === 'dead' ? `★ WIN ★` : `FINALE / ${BOSS_TRIGGER_AFTER_WAVE}`;
+    }
+  }
+
+  clearBossEncounterHud() {
+    const wrap = this.elements.bossEncounterHud;
+    if (wrap) wrap.style.display = 'none';
+    if (this.elements.bossEncounterHpFill) this.elements.bossEncounterHpFill.style.transform = 'scaleX(1)';
   }
 
   updateLevelName(name) {
@@ -394,11 +516,18 @@ export class UIManager {
     b.setAttribute('aria-label', playing ? 'Pause music' : 'Play music');
   }
 
-  showDareScreen(wave, onContinue, onStore) {
+  showDareScreen(wave, onContinue, onStore, onBailToTitle, opts = {}) {
     if (!this.elements.dareScreen) return;
     const msg = DARE_MESSAGES[Math.floor(Math.random() * DARE_MESSAGES.length)];
-    if (this.elements.dareWaveCleared) this.elements.dareWaveCleared.textContent = `WAVE ${wave} CLEARED`;
-    if (this.elements.dareText) this.elements.dareText.textContent = msg;
+    const finale = !!(opts.finaleLeadIn || wave === BOSS_TRIGGER_AFTER_WAVE);
+    if (this.elements.dareWaveCleared) {
+      this.elements.dareWaveCleared.textContent = finale ? `WAVE ${wave} CLEARED — NOT OVER` : `WAVE ${wave} CLEARED`;
+    }
+    if (this.elements.dareText) {
+      this.elements.dareText.textContent = finale
+        ? 'The walls shook. A shape behind the neon is calling more bodies onto the floor. One last fight.'
+        : msg;
+    }
 
     this.elements.hud.style.display = 'none';
     const dare = this.elements.dareScreen;
@@ -411,14 +540,18 @@ export class UIManager {
       });
     });
 
-    const contBtn = this.elements.dareContinue;
-    const storeBtn = this.elements.dareStore;
+    const contBtn = document.getElementById('dare-continue');
+    const storeBtn = document.getElementById('dare-store');
+    const bailBtn = document.getElementById('dare-bail-btn');
 
     const cleanup = () => {
-      contBtn.replaceWith(contBtn.cloneNode(true));
-      storeBtn.replaceWith(storeBtn.cloneNode(true));
+      for (const id of ['dare-continue', 'dare-store', 'dare-bail-btn']) {
+        const el = document.getElementById(id);
+        if (el) el.replaceWith(el.cloneNode(true));
+      }
       this.elements.dareContinue = document.getElementById('dare-continue');
       this.elements.dareStore = document.getElementById('dare-store');
+      this.elements.dareBailBtn = document.getElementById('dare-bail-btn');
     };
 
     const hideDare = () => {
@@ -426,16 +559,27 @@ export class UIManager {
       this.elements.dareScreen.style.opacity = '';
       this.elements.dareScreen.style.transition = '';
     };
-    bindPrimaryPointerUpOnce(contBtn, () => {
-      cleanup();
-      hideDare();
-      onContinue();
-    });
-    bindPrimaryPointerUpOnce(storeBtn, () => {
-      cleanup();
-      hideDare();
-      onStore();
-    });
+    if (contBtn) {
+      bindPrimaryPointerUpOnce(contBtn, () => {
+        cleanup();
+        hideDare();
+        onContinue();
+      });
+    }
+    if (storeBtn) {
+      bindPrimaryPointerUpOnce(storeBtn, () => {
+        cleanup();
+        hideDare();
+        onStore();
+      });
+    }
+    if (bailBtn && typeof onBailToTitle === 'function') {
+      bindPrimaryPointerUpOnce(bailBtn, () => {
+        cleanup();
+        hideDare();
+        onBailToTitle();
+      });
+    }
   }
 
   showStore(coins, unlockedWeapons, currentWeapon, callbacks) {
@@ -513,6 +657,7 @@ export class UIManager {
 
   init() {
     this.updateHealth(300, 300);
+    this.updateStamina(100, 100, false);
     this.updateCoins(0);
     this.updateScore(0);
     this.updateWave(1);

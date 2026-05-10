@@ -20,6 +20,12 @@ export class Player {
     this.isDead = false;
 
     this.moveSpeed = 8;
+    /** Sprint burst: ~4% faster while draining; refills from 0 to 100 in 10s when not sprinting. */
+    this.stamina = 100;
+    this.staminaMax = 100;
+    this.sprintHeld = false;
+    this._sprintConsuming = false;
+    this.staminaBoostActive = false;
     this.jumpForce = 8;
     /** Extra jumps while airborne (1 = double jump total: ground + one mid-air). */
     this.airJumpsLeft = 0;
@@ -179,7 +185,13 @@ export class Player {
       case 'KeyS': case 'ArrowDown': this.moveBackward = true; break;
       case 'KeyA': case 'ArrowLeft': this.moveLeft = true; break;
       case 'KeyD': case 'ArrowRight': this.moveRight = true; break;
-      case 'Space': this.pendingJump = true; break;
+      case 'Space':
+        if (!event.repeat) this.pendingJump = true;
+        break;
+      case 'ShiftLeft':
+      case 'ShiftRight':
+        this.sprintHeld = true;
+        break;
     }
   }
 
@@ -190,6 +202,10 @@ export class Player {
       case 'KeyA': case 'ArrowLeft': this.moveLeft = false; break;
       case 'KeyD': case 'ArrowRight': this.moveRight = false; break;
       case 'Space': break;
+      case 'ShiftLeft':
+      case 'ShiftRight':
+        this.sprintHeld = false;
+        break;
     }
   }
 
@@ -272,8 +288,22 @@ export class Player {
     const hasInput = this.direction.x !== 0 || this.direction.z !== 0;
     if (hasInput) this.direction.normalize();
 
-    this.body.velocity.x = hasInput ? this.direction.x * this.moveSpeed : 0;
-    this.body.velocity.z = hasInput ? this.direction.z * this.moveSpeed : 0;
+    const wantSprint = this.sprintHeld && hasInput;
+    if (!wantSprint) this._sprintConsuming = false;
+    else if (this.stamina >= 100) this._sprintConsuming = true;
+    if (this.stamina <= 0) this._sprintConsuming = false;
+
+    const boosted = wantSprint && this._sprintConsuming && this.stamina > 0;
+    this.staminaBoostActive = boosted;
+    const speed = this.moveSpeed * (boosted ? 1.04 : 1);
+    if (boosted) {
+      this.stamina = Math.max(0, this.stamina - 40 * deltaTime);
+    } else if (this.stamina < this.staminaMax) {
+      this.stamina = Math.min(this.staminaMax, this.stamina + 10 * deltaTime);
+    }
+
+    this.body.velocity.x = hasInput ? this.direction.x * speed : 0;
+    this.body.velocity.z = hasInput ? this.direction.z * speed : 0;
 
     if (this.pendingJump) {
       this.pendingJump = false;
@@ -334,6 +364,10 @@ export class Player {
     this.pendingJump = false;
     this.groundSuppressUntil = 0;
     this.rapidFire = false;
+    this.stamina = this.staminaMax;
+    this.sprintHeld = false;
+    this._sprintConsuming = false;
+    this.staminaBoostActive = false;
     if (this.isMobile) {
       this.cameraYaw = 0;
       this.cameraPitch = 0;

@@ -9,7 +9,8 @@ import { Player } from './player.js';
 import { EnemyManager } from './enemy.js';
 import { Weapon, WEAPON_DEFS } from './weapon.js';
 import { ItemManager } from './items.js';
-import { WaveManager, TOTAL_WAVES } from './waves.js';
+import { WaveManager, BOSS_TRIGGER_AFTER_WAVE } from './waves.js';
+import { BossEncounter } from './boss-encounter.js';
 import { UIManager, STORE_ITEMS } from './ui.js';
 import { Arena, LEVELS } from './arena.js';
 import { DeathScene } from './death-scene.js';
@@ -175,6 +176,17 @@ class Game {
     this._cinematicEnsurePromise = null;
     /** @type {ReturnType<typeof setTimeout> | null} */
     this._cinematicEnsureDebounce = null;
+
+    /** After clearing wave `BOSS_TRIGGER_AFTER_WAVE` (see waves.js), countdown starts the finale boss. */
+    this._pendingBossAfterDare = false;
+    /** @type {BossEncounter | null} */
+    this.bossEncounter = null;
+
+    /** Desktop: ESC/P pause overlay */
+    this.pauseMenuActive = false;
+    this._pauseSavedInputFrozen = false;
+    /** @type {((e: KeyboardEvent) => void) | null} */
+    this._boundDesktopKeydown = null;
   }
 
   isCinematicReadyForSelection() {
@@ -692,10 +704,20 @@ class Game {
     this.waveManager.setPlayerCamera(this.camera);
     this.enemyManager.setWaveManager(this.waveManager);
 
+    this.bossEncounter = new BossEncounter(this.scene, this.enemyManager, { isMobile: this.isMobile });
+    this.bossEncounter.onVictory = () => {
+      this.gameMusic?.leaveBossFight();
+      this.ui.clearBossEncounterHud();
+      this.ui.updateWave(BOSS_TRIGGER_AFTER_WAVE);
+      this.bossEncounter.reset();
+      this.showVictory();
+    };
+    this.bossEncounter.onUiUpdate = (payload) => this.ui.setBossEncounterHud(payload);
+
     this.waveManager.onWaveStart = (wave, taunt, levelChanged) => {
       this.ui.updateWave(wave);
       const levelName = this.arena.getLevelName();
-      const finalTaunt = wave === TOTAL_WAVES ? 'FINAL WAVE — END THE DISCO' : taunt;
+      const finalTaunt = wave === BOSS_TRIGGER_AFTER_WAVE ? 'FINAL WAVE — END THE DISCO' : taunt;
       this.ui.showWaveAnnouncement(wave, finalTaunt, levelName, levelChanged);
       this.ui.updateLevelName(levelName);
     };
@@ -729,33 +751,32 @@ class Game {
       } else {
         this.enemyManager.replenishPool();
       }
-      if (wave >= TOTAL_WAVES) {
-        this.showVictory();
-      } else {
-        if (this.specialAttackActive) {
-          this.specialAttack.stop();
-          this.specialAttackActive = false;
-          this.player.inputFrozen = false;
-        }
-        this.player.inputFrozen = true;
-        this.weapon.isHolding = false;
-        if (!this.isMobile && document.pointerLockElement) {
-          document.exitPointerLock();
-        }
-        this.player.controls.unlock();
-        const yaw = this.getPlayerYaw();
-        const goDare = () => {
-          this.player.inputFrozen = false;
-          this.showDareScreen(wave);
-        };
-        (async () => {
-          await this.waveClear.ensureLoaded().catch(() => {});
-          if (this.isMobile) {
-            await new Promise((r) => requestAnimationFrame(r));
-          }
-          this.waveClear.start(wave, this.player, yaw, goDare);
-        })();
+      if (wave === BOSS_TRIGGER_AFTER_WAVE) {
+        this._pendingBossAfterDare = true;
       }
+      if (this.specialAttackActive) {
+        this.specialAttack.stop();
+        this.specialAttackActive = false;
+        this.player.inputFrozen = false;
+      }
+      this.player.inputFrozen = true;
+      this.weapon.isHolding = false;
+      if (!this.isMobile && document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+      this.player.controls.unlock();
+      const yaw = this.getPlayerYaw();
+      const goDare = () => {
+        this.player.inputFrozen = false;
+        this.showDareScreen(wave);
+      };
+      (async () => {
+        await this.waveClear.ensureLoaded().catch(() => {});
+        if (this.isMobile) {
+          await new Promise((r) => requestAnimationFrame(r));
+        }
+        this.waveClear.start(wave, this.player, yaw, goDare);
+      })();
     };
   }
 
@@ -810,6 +831,7 @@ class Game {
   }
 
   async preloadModels(onProgress) {
+    /** Boss FBX are huge — loaded when the finale starts (`BossEncounter.begin`), not here. */
     const models = [
       '/models/alon_dancing.fbx',
       '/models/slingoor_dance.fbx',
@@ -925,30 +947,34 @@ class Game {
 
     const jumpBtn = document.getElementById('jump-btn');
     if (jumpBtn) {
+      let jumpTouchHeld = false;
+      const clearJumpHold = (e) => {
+        e.preventDefault();
+        jumpTouchHeld = false;
+      };
       jumpBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
+        if (jumpTouchHeld) return;
+        jumpTouchHeld = true;
         this.player.pendingJump = true;
       }, { passive: false });
-      jumpBtn.addEventListener('touchend', (e) => {
-        e.preventDefault();
-      }, { passive: false });
+      jumpBtn.addEventListener('touchend', clearJumpHold, { passive: false });
+      jumpBtn.addEventListener('touchcancel', clearJumpHold, { passive: false });
     }
 
     this._setupMobileAutofireToggle();
 
-    document.addEventListener('keydown', (e) => {
-      if (e.code === 'KeyE' && this.isRunning) {
-        this.trySpecialAttack();
-      }
-      const num = parseInt(e.key);
-      if (num >= 1 && num <= 4) {
-        const weapons = ['disco', 'gatling', 'laser', 'rocket'];
-        const w = weapons[num - 1];
-        if (this.unlockedWeapons.includes(w)) {
-          this.switchWeapon(w);
-        }
-      }
-    });
+    this._boundDesktopKeydown = this._handleDesktopGameplayKeydown.bind(this);
+    window.addEventListener('keydown', this._boundDesktopKeydown, { capture: true });
+
+    const hudMenuBtn = document.getElementById('hud-menu-btn');
+    if (hudMenuBtn) {
+      hudMenuBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (this.canOpenPauseMenu()) this.openPauseMenu();
+      });
+    }
   }
 
   onWindowResize() {
@@ -1045,7 +1071,12 @@ class Game {
     }, () => this.returnToTitle());
   }
 
-  returnToTitle() {
+  returnToTitle(opts = {}) {
+    this.pauseMenuActive = false;
+    this.ui.hidePauseMenu();
+    this._pendingBossAfterDare = false;
+    this.bossEncounter?.reset();
+    this.ui.clearBossEncounterHud();
     this.isRunning = false;
     this.gameMusic?.stop();
     this.ui.syncMusicButton?.();
@@ -1059,10 +1090,157 @@ class Game {
     void this.ensureCinematicsForSelection();
     this._characterSelect?.refreshStartButton();
     this._characterSelect?.relayout();
+    if (opts.focusCarousel) {
+      requestAnimationFrame(() => {
+        document.querySelector('.dossier-roster')?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+      });
+    }
+  }
+
+  canOpenPauseMenu() {
+    if (this.isMobile || !this.modelsReady) return false;
+    if (this.pauseMenuActive) return false;
+    if (!this.isRunning || this.player?.isDead) return false;
+    if (this.specialAttackActive || this._pendingSpecialStart) return false;
+    if (this._waveCountdownRunning) return false;
+    if (this.waveClear?.active) return false;
+    return true;
+  }
+
+  openPauseMenu() {
+    if (!this.canOpenPauseMenu()) return;
+    this.pauseMenuActive = true;
+    this._pauseSavedInputFrozen = !!this.player?.inputFrozen;
+    this.player.inputFrozen = true;
+    this.weapon.isHolding = false;
+    this.isRunning = false;
+    this.clock.stop();
+    this._pendingSpecialStart = null;
+    if (!this.isMobile && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+    this.player.controls.unlock();
+    this.ui.showPauseMenu(
+      () => this.closePauseMenuResume(),
+      () => this.quitRunToTitleFromPause()
+    );
+  }
+
+  closePauseMenuResume() {
+    if (!this.pauseMenuActive) return;
+    this.pauseMenuActive = false;
+    this.ui.hidePauseMenu();
+    this.isRunning = true;
+    this.player.inputFrozen = this._pauseSavedInputFrozen;
+    this.clock.start();
+    if (this.isMobile) {
+      this.player.controls.lock();
+      document.getElementById('mobile-controls')?.style.setProperty('display', 'block');
+    } else {
+      this.player.controls.lock();
+    }
+    this.animate();
+  }
+
+  quitRunToTitleFromPause() {
+    if (!this.pauseMenuActive) return;
+    this.pauseMenuActive = false;
+    this.ui.hidePauseMenu();
+    this._waveCountdownSerial = (this._waveCountdownSerial || 0) + 1;
+    this._waveCountdownRunning = false;
+    this.ui.hideWaveCountdown();
+    this.player.inputFrozen = false;
+    this.weapon.isHolding = false;
+    this._pendingSpecialStart = null;
+    this.specialAttackActive = false;
+    this.specialAttack?.stop();
+    this.waveClear?.stop(false);
+    this.clock.stop();
+    this._pendingBossAfterDare = false;
+    this.bossEncounter?.reset();
+    this.ui.clearBossEncounterHud();
+    this.gameMusic?.leaveBossFight();
+    if (!this.isMobile && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+    this.player.controls.unlock();
+    this.returnToTitle();
+  }
+
+  /** After game-over: back to dossier without starting a new run. */
+  leaveRunToTitleFromGameOver(opts = {}) {
+    this.player.reset();
+    this.player.controls.unlock();
+    this.deathSequenceActive = false;
+    this.deathScene?.stop?.();
+    this.specialAttackActive = false;
+    this.specialAttack?.stop();
+    this._pendingSpecialStart = null;
+    this.waveClear?.stop(false);
+    this._waveCountdownSerial = (this._waveCountdownSerial || 0) + 1;
+    this._waveCountdownRunning = false;
+    this.ui.hideWaveCountdown();
+    this.isRunning = false;
+    this.clock.stop();
+    this._pendingBossAfterDare = false;
+    this.bossEncounter?.reset();
+    this.ui.clearBossEncounterHud();
+    this.gameMusic?.leaveBossFight();
+    this.returnToTitle(opts);
+  }
+
+  _handleDesktopGameplayKeydown(e) {
+    if (!this.isMobile && this.pauseMenuActive) {
+      if (e.code === 'Escape' || e.code === 'KeyP') {
+        if (!e.repeat) {
+          try {
+            e.preventDefault();
+          } catch (err) {}
+          this.closePauseMenuResume();
+        }
+        return;
+      }
+      return;
+    }
+
+    if (!this.isMobile && this.canOpenPauseMenu()) {
+      if (e.code === 'Escape' || e.code === 'KeyP') {
+        if (!e.repeat) {
+          try {
+            e.preventDefault();
+          } catch (err) {}
+          this.openPauseMenu();
+        }
+        return;
+      }
+    }
+
+    if (this.isMobile) return;
+
+    if (e.code === 'KeyE' && this.isRunning && !e.repeat) {
+      try {
+        e.preventDefault();
+      } catch (err) {}
+      this.trySpecialAttack();
+      return;
+    }
+
+    if (!this.isRunning) return;
+
+    const num = parseInt(e.key, 10);
+    if (num >= 1 && num <= 4) {
+      const weapons = ['disco', 'gatling', 'laser', 'rocket'];
+      const w = weapons[num - 1];
+      if (this.unlockedWeapons.includes(w)) {
+        this.switchWeapon(w);
+      }
+    }
   }
 
   restartRun() {
     if (!this.modelsReady) return;
+    this.pauseMenuActive = false;
+    this.ui.hidePauseMenu();
     if (this._resizeDebounceT) {
       clearTimeout(this._resizeDebounceT);
       this._resizeDebounceT = null;
@@ -1114,6 +1292,10 @@ class Game {
     this.enemyManager.clear();
     this.itemManager.clear();
     this.waveManager.reset();
+    this._pendingBossAfterDare = false;
+    this.bossEncounter?.reset();
+    this.ui.clearBossEncounterHud();
+    this.gameMusic?.leaveBossFight();
     this.clearAllyShips();
 
     this.arena.setLevel(0);
@@ -1166,15 +1348,19 @@ class Game {
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
       let wavePrimed = false;
+      let bossAfter = false;
       try {
         if (serial !== this._waveCountdownSerial) return;
+        bossAfter = this._pendingBossAfterDare;
         this.ui.showWaveCountdown();
         if (!this.isRunning || this.player.isDead) return;
 
-        this.waveManager.startNextWave(this.player.getPosition(), { deferAnnouncement: true });
-        wavePrimed = true;
-        this.ui.updateWave(this.waveManager.currentWave);
-        this.ui.updateLevelName(this.arena.getLevelName());
+        if (!bossAfter) {
+          this.waveManager.startNextWave(this.player.getPosition(), { deferAnnouncement: true });
+          wavePrimed = true;
+          this.ui.updateWave(this.waveManager.currentWave);
+          this.ui.updateLevelName(this.arena.getLevelName());
+        }
 
         for (const n of [3, 2, 1]) {
           if (serial !== this._waveCountdownSerial) return;
@@ -1188,6 +1374,29 @@ class Game {
         this.ui.setWaveCountdownDigit('GO!', true);
         this.waveManager.playCountdownGo();
         await sleep(goMs);
+
+        if (bossAfter && serial === this._waveCountdownSerial && this.isRunning && !this.player.isDead) {
+          this._pendingBossAfterDare = false;
+          try {
+            await this.bossEncounter.begin();
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+            if (this.isRunning && !this.player.isDead) {
+              this.gameMusic?.enterBossFight();
+            }
+          } catch (err) {
+            console.warn('[KOL BASH] Boss begin failed', err);
+            this.gameMusic?.leaveBossFight();
+            this.bossEncounter.reset();
+          }
+          if (this.isRunning && !this.player.isDead) {
+            this.ui.showWaveAnnouncement(
+              BOSS_TRIGGER_AFTER_WAVE,
+              'FINALE — HE OWNS THE WALLS',
+              this.arena.getLevelName(),
+              false
+            );
+          }
+        }
       } finally {
         if (serial === this._waveCountdownSerial) {
           this.ui.hideWaveCountdown();
@@ -1195,7 +1404,7 @@ class Game {
           if (wavePrimed) {
             const ok = this.isRunning && !this.player.isDead;
             this.waveManager.releaseDeferredWaveStart({ silent: !ok });
-          } else if (this.isRunning && !this.player.isDead) {
+          } else if (this.isRunning && !this.player.isDead && !bossAfter) {
             this.waveManager.startNextWave(this.player.getPosition());
           }
           this.player.inputFrozen = false;
@@ -1204,6 +1413,32 @@ class Game {
     } finally {
       this._overlayResumeBusy = false;
     }
+  }
+
+  /** Chicken out on the between-waves dare screen — back to dossier. */
+  bailFromDareToTitle() {
+    this._overlayResumeBusy = false;
+    this._waveCountdownSerial = (this._waveCountdownSerial || 0) + 1;
+    this._waveCountdownRunning = false;
+    this.ui.hideWaveCountdown();
+    this.waveManager?.releaseDeferredWaveStart?.({ silent: true });
+    this.clearAllyShips();
+    this.specialAttackActive = false;
+    this.specialAttack?.stop();
+    this._pendingSpecialStart = null;
+    this.waveClear?.stop(false);
+    this._pendingBossAfterDare = false;
+    this.bossEncounter?.reset();
+    this.ui.clearBossEncounterHud();
+    this.gameMusic?.leaveBossFight();
+    this.player.inputFrozen = false;
+    this.weapon.isHolding = false;
+    this.clock.stop();
+    if (!this.isMobile && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+    this.player.controls.unlock();
+    this.returnToTitle();
   }
 
   showDareScreen(wave) {
@@ -1215,7 +1450,8 @@ class Game {
       document.exitPointerLock();
     }
 
-    this.ui.showDareScreen(wave,
+    this.ui.showDareScreen(
+      wave,
       () => {
         this.dareDancers.hide();
         this.resumeNextWave();
@@ -1223,7 +1459,12 @@ class Game {
       () => {
         this.dareDancers.hide();
         this.showStore();
-      }
+      },
+      () => {
+        this.dareDancers.hide();
+        this.bailFromDareToTitle();
+      },
+      { finaleLeadIn: wave === BOSS_TRIGGER_AFTER_WAVE }
     );
     if (this.dareDancers.useWebGlRenderer) {
       requestAnimationFrame(() => this.dareDancers.show());
@@ -1258,7 +1499,9 @@ class Game {
       this.coins -= item.cost;
       this.healthUpgrades++;
       this.player.maxHealth += 50;
-      this.player.health = Math.min(this.player.health + 50, this.player.maxHealth);
+      /** Flat + % of new max so buys feel good when hurt, still capped at max. */
+      const replenish = 60 + Math.round(this.player.maxHealth * 0.12);
+      this.player.heal(replenish);
       this.ui.updateHealth(this.player.health, this.player.maxHealth);
     } else if (id === 'allyDur') {
       this.coins -= item.cost;
@@ -1384,6 +1627,27 @@ class Game {
           this.rocketAOE(closestEnemy.position);
         }
       });
+    } else if (this.bossEncounter?.isActive()) {
+      const dealt = this.bossEncounter.tryHitscan(muzzlePos, dir, this.weapon.damage);
+      if (dealt > 0) {
+        this.damageDealt += dealt;
+        this.weapon.playHitSound();
+        this._hitTarget = this._hitTarget || new THREE.Vector3();
+        this.bossEncounter.getFxHitTarget(this._hitTarget);
+        this.weapon.spawnProjectile(muzzlePos, this._hitTarget, () => {
+          if (this.currentWeapon === 'rocket') {
+            this.rocketAOE(this._hitTarget);
+          }
+        });
+      } else {
+        this._missTarget = this._missTarget || new THREE.Vector3();
+        this._missTarget.set(muzzlePos.x + dir.x * 25, muzzlePos.y + dir.y * 25, muzzlePos.z + dir.z * 25);
+        this.weapon.spawnProjectile(muzzlePos, this._missTarget, () => {
+          if (this.currentWeapon === 'rocket') {
+            this.rocketAOE(this._missTarget);
+          }
+        });
+      }
     } else {
       this._missTarget = this._missTarget || new THREE.Vector3();
       this._missTarget.set(muzzlePos.x + dir.x * 25, muzzlePos.y + dir.y * 25, muzzlePos.z + dir.z * 25);
@@ -1408,6 +1672,10 @@ class Game {
         this.damageDealt += dmg;
         this.enemyManager.damageEnemy(enemy, dmg);
       }
+    }
+    if (this.bossEncounter?.isActive()) {
+      const bd = this.bossEncounter.tryAoE(center.x, center.z, def.aoeRadius, def.aoeDamage);
+      if (bd > 0) this.damageDealt += bd;
     }
     this.screenShake = Math.min(this.screenShake + 0.6, 1.2);
   }
@@ -1643,7 +1911,9 @@ class Game {
         if (now - lastAttack > 800) {
           const type = enemy.userData.type;
           const base = type.diveDamage ?? type.jumpDamage ?? type.damage;
-          const damage = Math.round(base * (enemy.userData.chaosMeleeMul ?? 1));
+          const damage = Math.round(
+            base * (enemy.userData.chaosMeleeMul ?? 1) * (enemy.userData.finaleDmgMul ?? 1)
+          );
           this.player.takeDamage(damage);
           enemy.userData.lastAttackTime = now;
           this.ui.updateHealth(this.player.health, this.player.maxHealth);
@@ -1731,6 +2001,10 @@ class Game {
       onDamage: (amt) => {
         this.damageDealt += amt;
       },
+      tryDamageFinaleBoss: (kind, px, py, pz, dmg) =>
+        this.bossEncounter?.isActive() && this.bossEncounter.isVulnerable()
+          ? this.bossEncounter.trySpecialHit(kind, px, py, pz, dmg)
+          : 0,
       onEnd: () => {
         this.specialAttackActive = false;
         this._mobileDbg?.mark('SPECIAL_END', '');
@@ -1752,6 +2026,10 @@ class Game {
   beginDeathSequence() {
     if (this.deathSequenceActive) return;
     this._pendingSpecialStart = null;
+    this._pendingBossAfterDare = false;
+    this.bossEncounter?.reset();
+    this.ui.clearBossEncounterHud();
+    this.gameMusic?.leaveBossFight();
     this._mobileDbg?.mark('DEATH_SEQUENCE', '');
     if (this.specialAttackActive) {
       this.specialAttack.stop();
@@ -1791,13 +2069,20 @@ class Game {
     if (this.isMobile) {
       document.getElementById('mobile-controls')?.style.setProperty('display', 'none');
     }
-    this.ui.showGameOver({
-      wave: this.waveManager.currentWave,
-      score: this.score,
-      coins: this.coins,
-      kills: this.kills,
-      damageDealt: this.damageDealt
-    }, () => this.restartRun());
+    this.ui.showGameOver(
+      {
+        wave: this.waveManager.currentWave,
+        score: this.score,
+        coins: this.coins,
+        kills: this.kills,
+        damageDealt: this.damageDealt
+      },
+      {
+        onRetry: () => this.restartRun(),
+        onMainMenu: () => this.leaveRunToTitleFromGameOver({ focusCarousel: false }),
+        onChangeCharacter: () => this.leaveRunToTitleFromGameOver({ focusCarousel: true })
+      }
+    );
   }
 
   animateDeath() {
@@ -1836,6 +2121,7 @@ class Game {
         const playerPos = this.player.getPosition();
         this.physicsWorld.update(delta);
         this.player.update(delta);
+        this.ui.updateStamina(this.player.stamina, this.player.staminaMax, this.player.staminaBoostActive);
         this.updateAllyShips(delta, playerPos);
         this.waveClear.update(delta);
         this.renderer.render(this.scene, this.camera);
@@ -1914,6 +2200,7 @@ class Game {
 
       this.physicsWorld.update(delta);
       this.player.update(delta);
+      this.ui.updateStamina(this.player.stamina, this.player.staminaMax, this.player.staminaBoostActive);
 
       if (this.specialAttackActive) {
         this.specialAttack.update(delta, this.player, this.camera);
@@ -1945,6 +2232,7 @@ class Game {
       this.handleArenaTraps(playerPos);
       this.itemManager.update(delta, playerPos);
       this.handleItemPickups(playerPos);
+      if (this.bossEncounter?.isActive()) this.bossEncounter.update(delta);
       this.waveManager.update(delta, playerPos);
       this.updateAllyShips(delta, playerPos);
       this.updateLevelEffects(delta, playerPos);

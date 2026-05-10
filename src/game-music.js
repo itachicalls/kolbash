@@ -1,11 +1,18 @@
 /**
- * Background disco bed: tries /public/audio/disco-floor.mp3 first, then streams
- * Kevin MacLeod — Funkorama (CC BY 4.0 — credit on title screen; see https://incompetech.com/music/royalty-free/music.html).
+ * Background music: main disco bed + optional urgent boss bed.
+ *
+ * Main: `/public/audio/disco-floor.mp3` then Kevin MacLeod — Funkorama (CC BY 4.0).
+ * Boss: `/public/audio/boss-fight.mp3` then Kevin MacLeod — Volatile Reaction (CC BY 4.0).
+ * Credits: https://incompetech.com/music/royalty-free/music.html
  */
 
 const LOCAL_FIRST = '/audio/disco-floor.mp3';
 const FALLBACK_STREAM =
   'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Funkorama.mp3';
+
+const BOSS_LOCAL_FIRST = '/audio/boss-fight.mp3';
+const BOSS_FALLBACK_STREAM =
+  'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Volatile%20Reaction.mp3';
 
 export class GameMusic {
   constructor() {
@@ -15,6 +22,7 @@ export class GameMusic {
     this.audio.preload = 'auto';
     this._started = false;
     this._userPaused = false;
+    this._isBossTrack = false;
     this._onStateChange = null;
     this.audio.addEventListener('play', () => this._emit());
     this.audio.addEventListener('pause', () => this._emit());
@@ -30,21 +38,17 @@ export class GameMusic {
     } catch (e) {}
   }
 
-  start() {
-    if (this._started) return;
-    this._started = true;
-    this._userPaused = false;
-
+  _applyMainLevelBed() {
     const playFallback = () => {
       this.audio.onerror = null;
       this.audio.src = FALLBACK_STREAM;
       this.audio.load();
-      this.audio.play().catch(() => {});
+      if (!this._userPaused) this.audio.play().catch(() => {});
       this._emit();
     };
 
     this.audio.onerror = () => {
-      if (this.audio.src.includes('disco-floor')) {
+      if (this.audio.src && this.audio.src.includes('disco-floor')) {
         this.audio.onerror = null;
         playFallback();
       }
@@ -52,8 +56,53 @@ export class GameMusic {
 
     this.audio.src = LOCAL_FIRST;
     this.audio.load();
-    this.audio.play().catch(() => {});
+    if (!this._userPaused) this.audio.play().catch(() => {});
     this._emit();
+  }
+
+  start() {
+    if (this._started) return;
+    this._started = true;
+    this._userPaused = false;
+    this._isBossTrack = false;
+    this._applyMainLevelBed();
+  }
+
+  /** Swap to boss fight bed while a run is active (call after `start()`). */
+  enterBossFight() {
+    if (!this._started) return;
+    this._isBossTrack = true;
+    /** Boss bed is mastered hot — keep clearly under the main 0.3 bed so the swap is not a jump scare. */
+    this.audio.volume = 0.16;
+
+    const playFallback = () => {
+      this.audio.onerror = null;
+      this.audio.src = BOSS_FALLBACK_STREAM;
+      this.audio.load();
+      this.audio.volume = 0.16;
+      if (!this._userPaused) this.audio.play().catch(() => {});
+      this._emit();
+    };
+
+    this.audio.onerror = () => {
+      if (this.audio.src && this.audio.src.includes('boss-fight')) {
+        this.audio.onerror = null;
+        playFallback();
+      }
+    };
+
+    this.audio.src = BOSS_LOCAL_FIRST;
+    this.audio.load();
+    if (!this._userPaused) this.audio.play().catch(() => {});
+    this._emit();
+  }
+
+  /** Restore main level music (e.g. boss cleared or aborted). */
+  leaveBossFight() {
+    if (!this._started || !this._isBossTrack) return;
+    this._isBossTrack = false;
+    this.audio.volume = 0.3;
+    this._applyMainLevelBed();
   }
 
   /** True if the bed is running and not user-paused. */
@@ -78,6 +127,9 @@ export class GameMusic {
     this.audio.currentTime = 0;
     this._started = false;
     this._userPaused = false;
+    this._isBossTrack = false;
+    this.audio.onerror = null;
+    this.audio.volume = 0.3;
     this._emit();
   }
 

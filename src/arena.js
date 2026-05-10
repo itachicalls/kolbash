@@ -116,6 +116,7 @@ export class Arena {
     this.createFloor();
     this.createSpaceSky();
     this.createWalls();
+    this.createClockTower();
     this.setLevel(0);
   }
 
@@ -633,6 +634,140 @@ export class Arena {
     });
   }
 
+  /**
+   * Single large clock tower outside one wall; animated hands + orbiting bats (cheap meshes).
+   */
+  createClockTower() {
+    this.clockTowerRoot = new THREE.Group();
+    this.clockTowerRoot.position.set(-46, 0, -8);
+    this.clockTowerRoot.rotation.y = Math.PI / 2;
+
+    const stone = new THREE.MeshBasicMaterial({ color: 0x0c0812 });
+    const dark = new THREE.MeshBasicMaterial({ color: 0x08060c });
+
+    const base = new THREE.Mesh(new THREE.BoxGeometry(11, 19, 11), stone);
+    base.position.y = 9.5;
+    this.clockTowerRoot.add(base);
+
+    const mid = new THREE.Mesh(new THREE.BoxGeometry(9, 14, 9), dark);
+    mid.position.y = 19 + 7;
+    this.clockTowerRoot.add(mid);
+
+    const top = new THREE.Mesh(new THREE.BoxGeometry(7, 11, 7), stone);
+    top.position.y = 33 + 5.5;
+    this.clockTowerRoot.add(top);
+
+    const spire = new THREE.Mesh(new THREE.ConeGeometry(3.4, 10, 6), dark);
+    spire.position.y = 44 + 5;
+    this.clockTowerRoot.add(spire);
+
+    const faceMat = new THREE.MeshBasicMaterial({ color: 0x1e1828, side: THREE.DoubleSide });
+    const face = new THREE.Mesh(new THREE.CircleGeometry(5.2, 48), faceMat);
+    face.position.set(0, 33.5, 5.55);
+    this.clockTowerRoot.add(face);
+
+    const rim = new THREE.Mesh(
+      new THREE.RingGeometry(4.9, 5.35, 48),
+      new THREE.MeshBasicMaterial({ color: 0xecd493, side: THREE.DoubleSide })
+    );
+    rim.position.set(0, 33.5, 5.58);
+    this.clockTowerRoot.add(rim);
+
+    this._clockHands = new THREE.Group();
+    this._clockHands.position.set(0, 33.5, 5.62);
+    this.clockTowerRoot.add(this._clockHands);
+
+    this._clockHourMat = new THREE.MeshBasicMaterial({ color: 0xff00cc });
+    this._clockMinuteMat = new THREE.MeshBasicMaterial({ color: 0x00fff6 });
+    const hour = new THREE.Mesh(new THREE.BoxGeometry(0.22, 2.6, 0.09), this._clockHourMat);
+    hour.position.y = 1.2;
+    this._clockHands.add(hour);
+    this._clockHour = hour;
+
+    const minute = new THREE.Mesh(new THREE.BoxGeometry(0.17, 3.9, 0.08), this._clockMinuteMat);
+    minute.position.y = 1.7;
+    this._clockHands.add(minute);
+    this._clockMinute = minute;
+
+    for (let i = 0; i < 12; i++) {
+      const tick = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.5, 0.06),
+        new THREE.MeshBasicMaterial({ color: 0xc9b87a })
+      );
+      const a = (i / 12) * Math.PI * 2;
+      tick.position.set(Math.sin(a) * 4.45, Math.cos(a) * 4.45, 0);
+      tick.rotation.z = -a;
+      this._clockHands.add(tick);
+    }
+
+    const batN = this._liteMobile ? 6 : 14;
+    this._clockBats = [];
+    for (let i = 0; i < batN; i++) {
+      const batMat = new THREE.MeshBasicMaterial({
+        color: 0xff3399,
+        side: THREE.DoubleSide
+      });
+      const bat = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.15), batMat);
+      bat.position.set(0, 35, 8);
+      this.clockTowerRoot.add(bat);
+      this._clockBats.push({
+        mesh: bat,
+        phase: (i / batN) * Math.PI * 2,
+        radius: 7.5 + (i % 5) * 1.85,
+        speed: 1.1 + (i % 4) * 0.35,
+        yCenter: 32.5 + (i % 6) * 0.85,
+        flap: i * 1.7,
+        hue: (i * 0.07) % 1
+      });
+    }
+
+    this.scene.add(this.clockTowerRoot);
+  }
+
+  updateClockTower(deltaTime) {
+    if (!this._clockHands) return;
+    const t = performance.now() * 0.001;
+
+    if (this._clockHourMat && this._clockMinuteMat) {
+      const pulse = 0.5 + 0.5 * Math.sin(t * 5.5);
+      const pulse2 = 0.5 + 0.5 * Math.sin(t * 7.2 + 1.3);
+      const h0 = (t * 0.42 + pulse * 0.12) % 1;
+      const h1 = (t * 0.38 + 0.33 + pulse2 * 0.15) % 1;
+      this._clockHourMat.color.setHSL(h0, 1, 0.48 + 0.32 * pulse);
+      this._clockMinuteMat.color.setHSL(h1, 1, 0.52 + 0.28 * pulse2);
+    }
+
+    /** Erratic spin: multi-sine speed + occasional sharp reversals (disco chaos clock). */
+    const chaos = (x) =>
+      Math.sin(x * 6.91) * 4.2 +
+      Math.sin(x * 14.3 + 0.7) * 2.8 +
+      Math.sin(x * 22.7 + 2.1) * 1.6 +
+      Math.sin(x * 3.05) * Math.cos(x * 11.2) * 3.5;
+    const mSpeed = 4 + chaos(t) * 1.15 + Math.sin(t * 37) * 2.2;
+    const hSpeed = 0.15 + chaos(t * 0.83 + 0.5) * 0.22 + Math.sin(t * 19) * 0.12;
+    if (this._clockMinute) this._clockMinute.rotation.z -= deltaTime * mSpeed;
+    if (this._clockHour) this._clockHour.rotation.z -= deltaTime * hSpeed;
+
+    for (const b of this._clockBats || []) {
+      b.phase += deltaTime * b.speed;
+      const a = b.phase;
+      const r = b.radius;
+      const localX = Math.cos(a) * r;
+      const localZ = 6.2 + Math.sin(a) * r * 0.92;
+      const localY = b.yCenter + Math.sin(a * 2 + b.flap) * 2.4 + Math.sin(t * 3.4 + b.flap) * 0.5;
+      b.mesh.position.set(localX, localY, localZ);
+      b.mesh.rotation.y = -a + Math.PI * 0.5;
+      b.mesh.rotation.z = Math.sin(t * 16 + b.flap) * 0.45;
+
+      const mat = b.mesh.material;
+      if (mat && mat.color) {
+        const hb = (t * 0.28 + b.hue + Math.sin(t * 4 + b.flap) * 0.08) % 1;
+        mat.color.setHSL(hb, 1, 0.52 + 0.22 * Math.sin(t * 6 + b.flap));
+      }
+    }
+  }
+
+
   createWalls() {
     const size = 25;
     const height = 6;
@@ -829,5 +964,6 @@ export class Arena {
     }
 
     this.planets.forEach(p => p.rotation.y += deltaTime * 0.1);
+    this.updateClockTower(deltaTime);
   }
 }

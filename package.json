@@ -4,6 +4,9 @@
   "description": "FPS game with dancing enemies",
   "type": "module",
   "scripts": {
+    "ensure-toly-boss": "node scripts/ensureTolyBossAssets.mjs",
+    "predev": "node scripts/ensureTolyBossAssets.mjs",
+    "prebuild": "node scripts/ensureTolyBossAssets.mjs",
     "dev": "vite",
     "dev:lan": "vite --host 0.0.0.0",
     "build": "vite build",

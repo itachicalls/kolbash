@@ -872,7 +872,7 @@ export class EnemyManager {
     proj.position.copy(enemy.position);
     proj.position.y = enemy.userData.scaledHeight * 0.6;
     const baseDmg = enemy.userData.type.isBoss ? 8 : 4;
-    const dmg = Math.round(baseDmg * (enemy.userData.chaosMeleeMul ?? 1));
+    const dmg = Math.round(baseDmg * (enemy.userData.chaosMeleeMul ?? 1) * (enemy.userData.finaleDmgMul ?? 1));
     const vel = proj.userData.velocity || (proj.userData.velocity = { x: 0, y: 0, z: 0 });
     vel.x = dir.x;
     vel.y = dir.y;

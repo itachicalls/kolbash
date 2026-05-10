@@ -562,6 +562,35 @@
     }
     #special-vortex-orb:active { filter: brightness(1.12); }
 
+    #hud-menu-btn {
+      display: none;
+      flex-direction: row;
+      position: fixed;
+      top: 50px;
+      right: 58px;
+      z-index: 2;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      background: rgba(0, 0, 0, 0.72);
+      color: #e8e0f0;
+      font-size: 1.05rem;
+      line-height: 1;
+      cursor: pointer;
+      pointer-events: auto;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font-family: inherit;
+    }
+    #hud-menu-btn:active { filter: brightness(1.15); }
+    @media (min-width: 901px) and (pointer: fine) {
+      #hud-menu-btn { display: flex; }
+    }
+
     #music-toggle-btn {
       display: none;
       flex-direction: row;
@@ -597,6 +626,23 @@
     #health-bar-bg { width: 220px; height: 16px; background: rgba(0,0,0,0.8); border: 1px solid #333; border-radius: 2px; overflow: hidden; }
     #health-bar { width: 100%; height: 100%; background: linear-gradient(90deg, #00ff44, #00ff88); transition: width 0.2s ease; }
     #health-text { font-family: 'Orbitron', monospace; font-size: 0.8rem; color: #ff0066; }
+
+    #stamina-block { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.15rem; }
+    #stamina-label { font-size: 0.62rem; color: #555; text-transform: uppercase; letter-spacing: 0.1em; }
+    #stamina-bar-bg {
+      width: 220px; height: 10px; background: rgba(0,0,0,0.8);
+      border: 1px solid rgba(0, 200, 255, 0.22); border-radius: 2px; overflow: hidden;
+      transition: box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    #stamina-bar-bg.stamina-boosting {
+      border-color: rgba(0, 255, 255, 0.55);
+      box-shadow: 0 0 10px rgba(0, 255, 255, 0.35);
+    }
+    #stamina-bar {
+      width: 100%; height: 100%;
+      background: linear-gradient(90deg, #0088cc, #8866cc);
+      transition: width 0.12s ease-out, background 0.15s ease;
+    }
 
     #coins-container {
       position: absolute; bottom: 25px; right: 25px; display: flex; align-items: center; gap: 0.8rem;
@@ -660,6 +706,54 @@
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
       pointer-events: none; opacity: 0; transition: opacity 0.1s ease; z-index: 99;
       background: radial-gradient(ellipse at center, transparent 0%, rgba(255,0,0,0.4) 100%);
+    }
+
+    #boss-encounter-hud {
+      position: fixed;
+      top: 132px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 160;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.35rem;
+      pointer-events: none;
+      min-width: min(92vw, 420px);
+    }
+    #boss-encounter-title {
+      font-family: 'Orbitron', monospace;
+      font-size: 0.72rem;
+      font-weight: 900;
+      letter-spacing: 0.16em;
+      color: #ff66cc;
+      text-shadow: 0 0 14px rgba(255, 0, 200, 0.55);
+      text-align: center;
+    }
+    #boss-encounter-sub {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 0.68rem;
+      color: #aac8ff;
+      letter-spacing: 0.05em;
+      text-align: center;
+      max-width: min(90vw, 400px);
+      line-height: 1.25;
+    }
+    #boss-encounter-hp-track {
+      width: min(88vw, 380px);
+      height: 9px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255, 0, 200, 0.38);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    #boss-encounter-hp-fill {
+      height: 100%;
+      width: 100%;
+      transform-origin: left center;
+      background: linear-gradient(90deg, #ff0088, #ffaa00);
+      transform: scaleX(1);
+      transition: transform 0.12s ease-out;
     }
 
     /* ===== PRE-WAVE COUNTDOWN (disco) ===== */
@@ -737,7 +831,8 @@
       padding: 1rem; pointer-events: none;
     }
 
-    #dare-screen-front .dare-buttons { pointer-events: auto; }
+    #dare-screen-front .dare-buttons,
+    #dare-screen-front .dare-actions { pointer-events: auto; }
 
     #dare-screen::before {
       content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -763,8 +858,33 @@
       font-style: italic; margin-bottom: 2.5rem; max-width: 500px; padding: 0 1rem;
     }
 
+    .dare-actions {
+      display: flex; flex-direction: column; align-items: center; gap: 1.25rem;
+      max-width: 520px; width: 100%;
+    }
     .dare-buttons {
       display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center;
+    }
+
+    #dare-bail-btn {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      font-style: italic;
+      letter-spacing: 0.04em;
+      padding: 0.55rem 1.25rem;
+      cursor: pointer;
+      color: #c8d0e8;
+      background: rgba(0, 0, 0, 0.35);
+      border: 2px dashed rgba(180, 190, 210, 0.45);
+      border-radius: 999px;
+      transition: color 0.2s, border-color 0.2s, background 0.2s, transform 0.15s;
+    }
+    #dare-bail-btn:hover {
+      color: #fff;
+      border-color: rgba(255, 160, 180, 0.75);
+      background: rgba(40, 10, 24, 0.55);
+      transform: scale(1.03);
     }
 
     #dare-continue {
@@ -883,6 +1003,46 @@
       transition: all 0.2s ease; pointer-events: auto;
     }
     #game-over .restart-btn:hover { transform: scale(1.05); filter: brightness(1.2); }
+
+    #game-over .game-over-actions {
+      display: flex; flex-direction: column; align-items: center; gap: 1rem; width: 100%; max-width: 420px;
+    }
+    #game-over .game-over-secondary {
+      display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; width: 100%;
+    }
+    #game-over .restart-btn.secondary {
+      flex: 1 1 auto; min-width: 140px;
+      background: transparent; color: #aab6d4; border: 2px solid rgba(255, 0, 200, 0.45);
+      clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%);
+    }
+    #game-over .restart-btn.secondary:hover {
+      color: #fff; border-color: rgba(0, 255, 255, 0.55); filter: brightness(1.15);
+    }
+
+    /* ===== PAUSE (desktop in-run) ===== */
+    #pause-menu {
+      position: fixed; inset: 0; z-index: 1600;
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(4, 2, 14, 0.88); backdrop-filter: blur(6px);
+      text-align: center; padding: 1.5rem;
+    }
+    #pause-menu .pause-title {
+      font-family: 'Orbitron', monospace; font-size: clamp(1.6rem, 4vw, 2.4rem); font-weight: 800;
+      letter-spacing: 0.28em; color: #e8e0f0; margin-bottom: 0.35rem;
+    }
+    #pause-menu .pause-hint {
+      font-size: 0.85rem; color: #7a8094; letter-spacing: 0.12em; margin-bottom: 2rem;
+    }
+    #pause-menu .pause-buttons {
+      display: flex; flex-direction: column; gap: 0.85rem; width: 100%; max-width: 280px;
+    }
+    #pause-menu .restart-btn.secondary {
+      background: transparent; color: #c8cce0; border: 2px solid rgba(255, 0, 200, 0.4);
+      clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%);
+    }
+    #pause-menu .restart-btn.secondary:hover {
+      color: #fff; border-color: rgba(0, 255, 255, 0.5); filter: brightness(1.12);
+    }
 
     /* ===== VICTORY (campaign complete) ===== */
     #victory-screen {
@@ -1072,6 +1232,8 @@
       #health-bar-bg { width: 140px; height: 12px; }
       #health-text { font-size: 0.6rem; }
       #health-label { font-size: 0.6rem; }
+      #stamina-bar-bg { width: 140px; height: 8px; }
+      #stamina-label { font-size: 0.55rem; }
 
       #coins-container { bottom: 10px; right: auto; left: 10px; bottom: 55px; padding: 0.3rem 0.6rem; }
       #coin-icon { width: 16px; height: 16px; }
@@ -1094,6 +1256,7 @@
       #dare-wave-cleared { font-size: 0.8rem; }
       #dare-text { font-size: 0.9rem; }
       #dare-continue, #dare-store { font-size: 0.85rem; padding: 0.7rem 2rem; }
+      #dare-bail-btn { font-size: 0.88rem; padding: 0.45rem 1rem; }
 
       .store-header { font-size: 1.6rem; }
       #store-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.5rem; }
@@ -1130,6 +1293,8 @@
       #health-container { bottom: 5px; left: 5px; }
       #health-bar-bg { width: 100px; height: 10px; }
       #health-text { font-size: 0.5rem; }
+      #stamina-bar-bg { width: 100px; height: 7px; }
+      #stamina-label { font-size: 0.48rem; }
 
       #joystick-base { width: 90px; height: 90px; }
       #joystick-stick { width: 38px; height: 38px; }
@@ -1247,8 +1412,10 @@
       <span class="key">MOUSE</span> Aim
       <span class="key">HOLD CLICK</span> Fire
       <span class="key">SPACE</span> Jump
+      <span class="key">SHIFT</span> Sprint (stamina)
       <span class="key">1-4</span> Weapons
       <span class="key">E</span> Disco Vortex (11 kills)
+      <span class="key">ESC / P</span> Pause
     </div>
     <p class="music-credit">Music: <a href="https://incompetech.com/music/royalty-free/music.html" target="_blank" rel="noopener">Funkorama</a> by Kevin MacLeod (CC BY 4.0) · Optional local file: <code>/public/audio/disco-floor.mp3</code></p>
   </div>
@@ -1269,12 +1436,22 @@
     <div id="level-display"><span class="value" id="level-name"></span></div>
     <div id="level-effect"></div>
 
+    <div id="boss-encounter-hud" style="display: none;" aria-live="polite">
+      <div id="boss-encounter-title"></div>
+      <div id="boss-encounter-sub"></div>
+      <div id="boss-encounter-hp-track"><div id="boss-encounter-hp-fill"></div></div>
+    </div>
+
     <div id="weapon-hud"><span id="weapon-name">DISCO BLASTER</span></div>
 
     <div id="health-container">
       <span id="health-label">HP</span>
       <div id="health-bar-bg"><div id="health-bar"></div></div>
       <span id="health-text">300 / 300</span>
+      <div id="stamina-block">
+        <span id="stamina-label">Sprint</span>
+        <div id="stamina-bar-bg"><div id="stamina-bar"></div></div>
+      </div>
     </div>
 
     <div id="coins-container"><div id="coin-icon"></div><span id="coin-count">0</span></div>
@@ -1304,9 +1481,12 @@
       <div id="dare-wave-cleared">WAVE 1 CLEARED</div>
       <div class="dare-title">DARE TO CONTINUE?</div>
       <div id="dare-text">THE DISCO ISN'T DONE WITH YOU YET</div>
-      <div class="dare-buttons">
-        <button id="dare-continue">BRING IT ON</button>
-        <button id="dare-store">DISCO ARMORY</button>
+      <div class="dare-actions">
+        <div class="dare-buttons">
+          <button type="button" id="dare-continue">BRING IT ON</button>
+          <button type="button" id="dare-store">DISCO ARMORY</button>
+        </div>
+        <button type="button" id="dare-bail-btn" aria-label="Quit to main menu">Heck no! Get me outta here!</button>
       </div>
     </div>
   </div>
@@ -1341,6 +1521,7 @@
       <div class="special-label">DISCO VORTEX</div>
       <div id="special-charge-bg"><div id="special-charge-fill"></div></div>
     </div>
+    <button type="button" id="hud-menu-btn" aria-label="Pause menu" title="Pause (Esc)">☰</button>
     <button type="button" id="music-toggle-btn" aria-label="Toggle music" title="Music">🎵</button>
     <button type="button" id="special-vortex-orb" aria-label="Disco Vortex" title="Disco Vortex (full charge)">
       <span class="special-orb-glow" aria-hidden="true"></span>
@@ -1358,7 +1539,22 @@
       <div class="stat"><div class="label">Damage</div><div class="value" id="final-damage">0</div></div>
       <div class="stat"><div class="label">Coins</div><div class="value" id="final-coins">0</div></div>
     </div>
-    <button type="button" class="restart-btn" id="game-retry-btn">TRY AGAIN</button>
+    <div class="game-over-actions">
+      <button type="button" class="restart-btn" id="game-retry-btn">TRY AGAIN</button>
+      <div class="game-over-secondary">
+        <button type="button" class="restart-btn secondary" id="game-change-fighter-btn">CHANGE FIGHTER</button>
+        <button type="button" class="restart-btn secondary" id="game-main-menu-btn">MAIN MENU</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pause-menu" style="display: none;" aria-hidden="true">
+    <div class="pause-title">PAUSED</div>
+    <p class="pause-hint">ESC or P · resume when ready</p>
+    <div class="pause-buttons">
+      <button type="button" class="restart-btn" id="pause-resume-btn">RESUME</button>
+      <button type="button" class="restart-btn secondary" id="pause-quit-btn">QUIT TO TITLE</button>
+    </div>
   </div>
 
   <div id="victory-screen">

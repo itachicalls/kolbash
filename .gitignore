@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Junction to local Toly FBX tree (see `npm run ensure-toly-boss`)
+public/models/boss/toly
 .DS_Store
 *.log
 .env

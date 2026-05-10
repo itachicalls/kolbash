@@ -275,6 +275,8 @@ export class SpecialAttackController {
     this.enemyManager = enemyManager;
     this.onDamage = callbacks.onDamage;
     this.onEnd = callbacks.onEnd;
+    /** @type {((kind: string, px: number, py: number, pz: number, dmg: number) => number) | null} */
+    this._tryDamageFinaleBoss = typeof callbacks.tryDamageFinaleBoss === 'function' ? callbacks.tryDamageFinaleBoss : null;
     this.lockYaw = lockYaw;
     this.elapsed = 0;
     this.radialTimer = 0;
@@ -422,6 +424,14 @@ export class SpecialAttackController {
         }
       }
 
+      if (u.life > 0 && this._tryDamageFinaleBoss) {
+        const bd = this._tryDamageFinaleBoss('orb', m.position.x, m.position.y, m.position.z, ORB_DAMAGE);
+        if (bd > 0) {
+          this.onDamage?.(bd);
+          u.life = 0;
+        }
+      }
+
       if (u.life <= 0) {
         u.active = false;
         m.visible = false;
@@ -443,6 +453,10 @@ export class SpecialAttackController {
         this.enemyManager.damageEnemy(enemy, dmg, this._lightMode ? { skipFlash: true } : undefined);
         this.onDamage?.(dmg);
       }
+    }
+    if (this._tryDamageFinaleBoss) {
+      const bd = this._tryDamageFinaleBoss('radial', px, py, pz, RADIAL_DAMAGE);
+      if (bd > 0) this.onDamage?.(bd);
     }
   }
 
@@ -562,6 +576,7 @@ export class SpecialAttackController {
 
     this.onDamage = null;
     this.onEnd = null;
+    this._tryDamageFinaleBoss = null;
     this.enemyManager = null;
     this._bootQueue = null;
   }
