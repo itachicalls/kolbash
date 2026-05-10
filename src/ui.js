@@ -5,6 +5,7 @@
 import { TOTAL_WAVES, REGULAR_WAVES, BOSS_TRIGGER_AFTER_WAVE } from './waves.js';
 import { SPECIAL_CHARGE_KILLS } from './special-attack.js';
 import { resumeSharedAudioContext } from './shared-audio.js';
+import { getFinaleBossIntroClip, DEFAULT_CHARACTER_ID } from './characters.js';
 
 export const STORE_ITEMS = [
   { id: 'gatling', name: 'GATLING GUN', cost: 200, type: 'weapon', desc: 'Rapid bullet storm' },
@@ -45,6 +46,22 @@ const DARE_MESSAGES = [
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** @param {HTMLVideoElement} video @param {{ mp4: string; mov: string }} clip */
+function applyFinaleIntroSources(video, clip) {
+  if (!video || !clip?.mp4 || !clip?.mov) return;
+  while (video.firstChild) {
+    video.removeChild(video.firstChild);
+  }
+  const mp4 = document.createElement('source');
+  mp4.src = clip.mp4;
+  mp4.type = 'video/mp4';
+  video.appendChild(mp4);
+  const mov = document.createElement('source');
+  mov.src = clip.mov;
+  mov.type = 'video/quicktime';
+  video.appendChild(mov);
 }
 
 export class UIManager {
@@ -335,8 +352,9 @@ export class UIManager {
    * Cinematic intro + masked boss FBX load. Pre-roll titles, then crossfade to video with audio.
    * Exit: opacity fade back to gameplay (not a hard cut).
    * @param {Promise<void>} bossLoadPromise from BossEncounter.begin()
+   * @param {{ mp4: string; mov: string }} [introClip] per-fighter paths (`getFinaleBossIntroClip`)
    */
-  async runBossCutsceneWithBossLoad(bossLoadPromise) {
+  async runBossCutsceneWithBossLoad(bossLoadPromise, introClip) {
     if (
       typeof window !== 'undefined' &&
       window.matchMedia &&
@@ -353,6 +371,9 @@ export class UIManager {
       await bossLoadPromise;
       return;
     }
+
+    const clip = introClip || getFinaleBossIntroClip(DEFAULT_CHARACTER_ID);
+    applyFinaleIntroSources(video, clip);
 
     const setHint = (t) => {
       if (hint) hint.textContent = t;

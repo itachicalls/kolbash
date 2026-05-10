@@ -22,7 +22,7 @@ import { resumeSharedAudioContext } from './shared-audio.js';
 import { attachMobileDebug } from './mobile-debug.js';
 import { CharacterSelectController } from './character-select.js';
 import { CharacterProfilePreview } from './character-profile-preview.js';
-import { firstPlayableCharacterId, getCharacter } from './characters.js';
+import { firstPlayableCharacterId, getCharacter, getFinaleBossIntroClip } from './characters.js';
 
 // #region agent log
 /** Off by default — agent logging does two fetch() + sessionStorage per event (bad on mobile WebKit). Enable with ?agentdebug=1 or localStorage kolbash_debug_agent=1 */
@@ -1382,7 +1382,8 @@ class Game {
           try {
             this.gameMusic?.pauseBedForCutscene();
             const bossLoad = this.bossEncounter.begin();
-            await this.ui.runBossCutsceneWithBossLoad(bossLoad);
+            const introClip = getFinaleBossIntroClip(this.selectedCharacterId);
+            await this.ui.runBossCutsceneWithBossLoad(bossLoad, introClip);
             if (serial !== this._waveCountdownSerial || !this.isRunning || this.player.isDead) {
               this.bossEncounter.reset();
               this.gameMusic?.leaveBossFight();

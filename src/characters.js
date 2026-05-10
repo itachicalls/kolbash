@@ -24,6 +24,11 @@ export const CHARACTER_ROSTER = [
     dossier:
       'When the Trenchville “kindness frequency” went live, every Kol on the grid dropped into the same hypnotic shuffle — except Serena. She woke up mid-chorus with the bass still screaming in her teeth and a disco ball where her conscience used to be. She does not negotiate with the beat. She breaks it.',
     cinematic: {
+      /** Finale intro before boss; MP4 first in browser. Files under `public/video/finale-cutscene/`. */
+      bossIntroClip: {
+        mp4: '/video/finale-cutscene/serena.mp4',
+        mov: '/video/finale-cutscene/serena.mov'
+      },
       deathModel: '/models/Dying.fbx',
       waveClearModels: [
         '/models/wave-clear/aiming-gun.fbx',
@@ -51,6 +56,10 @@ export const CHARACTER_ROSTER = [
     dossier:
       'Timmy was cataloguing bootleg vinyl behind Trenchville’s old cinema when the Doctor’s mind-control anthem detonated across the city. The crowd outside turned into a single swaying organism; Timmy only heard the wrong note — the one that was never supposed to exist. He grabbed his pack, tuned his ears to the static between stations, and stepped into the street to teach the hive a new dance.',
     cinematic: {
+      bossIntroClip: {
+        mp4: '/video/finale-cutscene/timmy.mp4',
+        mov: '/video/finale-cutscene/timmy.mov'
+      },
       deathModel: '/models/characters/timmy/dying/dying.fbx',
       waveClearModels: [
         '/models/characters/timmy/wave-clear/corkscrew-evade.fbx',
@@ -78,6 +87,11 @@ export const CHARACTER_ROSTER = [
     dossier:
       'Chad was mid-podcast on “alpha acoustics” at a Trenchville rooftop gym when the Doctor’s mind-control anthem rolled across the skyline. Every lifter below synced into the same creepy smile-and-sway — except Chad, who assumed the bass was jealous of his calves. Once he realized the city wasn’t admiring him organically, he vowed to deadlift the frequency off the airwaves and restore honest, obnoxious free will.',
     cinematic: {
+      /** Uses Timmy reel as placeholder until Chad-specific finale clip exists. */
+      bossIntroClip: {
+        mp4: '/video/finale-cutscene/chad.mp4',
+        mov: '/video/finale-cutscene/chad.mov'
+      },
       deathModel: '/models/characters/chad/dying/falling-back-death.fbx',
       waveClearModels: [
         '/models/characters/chad/wave-clear/floating.fbx',
@@ -98,4 +112,21 @@ export function getCharacter(id) {
 export function firstPlayableCharacterId() {
   const p = CHARACTER_ROSTER.find((c) => c.playable);
   return p ? p.id : DEFAULT_CHARACTER_ID;
+}
+
+/** @typedef {{ mp4: string; mov: string }} BossIntroClip */
+
+/**
+ * Finale pre-boss video paths for the selected fighter (`public/video/finale-cutscene/`).
+ * @param {string} characterId
+ * @returns {BossIntroClip}
+ */
+export function getFinaleBossIntroClip(characterId) {
+  const ch = getCharacter(characterId);
+  const c = ch?.cinematic?.bossIntroClip;
+  if (c && typeof c.mp4 === 'string' && typeof c.mov === 'string') return c;
+  return {
+    mp4: '/video/finale-cutscene/timmy.mp4',
+    mov: '/video/finale-cutscene/timmy.mov'
+  };
 }
