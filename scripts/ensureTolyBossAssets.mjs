@@ -1,6 +1,11 @@
 /**
- * Boss FBX must live under public/models/boss/toly/ for the browser to load them.
- * Your rig lives on OneDrive; this script links that folder here (no multi‑GB copy).
+ * Ensures `public/models/boss/toly/idle/Idle.fbx` exists for Vite / static hosting.
+ *
+ * - If that file is already present (git clone, or previous copy), no-op.
+ * - Otherwise, if `TOLY_BOSS_SRC` (or the default Windows OneDrive path) exists:
+ *   - Default: create a directory junction/symlink (no duplicate disk use).
+ *   - `TOLY_BOSS_MODE=copy` or `--copy`: recursive copy into `public/` (for authors
+ *     shipping assets to GitHub — run once, then commit `public/models/boss/toly/`).
  *
  * Override source: TOLY_BOSS_SRC="C:\\path\\to\\Toly" npm run ensure-toly-boss
  */
@@ -30,6 +35,9 @@ const target = process.env.TOLY_BOSS_SRC
   ? path.resolve(process.env.TOLY_BOSS_SRC)
   : defaultWinSrc;
 
+const wantCopy =
+  process.env.TOLY_BOSS_MODE === 'copy' || process.argv.includes('--copy');
+
 function hasMarker() {
   try {
     return fs.existsSync(marker);
@@ -45,7 +53,7 @@ function main() {
     console.warn(
       '[ensure-toly-boss] Toly source folder not found:\n  ' +
         target +
-        '\nSet TOLY_BOSS_SRC or copy FBX into public/models/boss/toly/ (see boss-encounter.js).'
+        '\nCommitted assets should ship in public/models/boss/toly/, or set TOLY_BOSS_SRC.'
     );
     return;
   }
@@ -53,29 +61,39 @@ function main() {
   fs.mkdirSync(path.dirname(linkPath), { recursive: true });
 
   if (fs.existsSync(linkPath)) {
+    fs.rmSync(linkPath, { recursive: true, force: true });
+  }
+
+  if (wantCopy) {
     try {
-      const st = fs.lstatSync(linkPath);
-      if (st.isSymbolicLink() || st.isDirectory()) {
-        if (hasMarker()) return;
-        fs.rmSync(linkPath, { recursive: true, force: true });
+      fs.cpSync(target, linkPath, { recursive: true });
+    } catch (e) {
+      console.warn('[ensure-toly-boss] Copy failed:', e?.message || e);
+      return;
+    }
+  } else {
+    const type = os.platform() === 'win32' ? 'junction' : 'dir';
+    try {
+      fs.symlinkSync(target, linkPath, type);
+    } catch (e) {
+      console.warn('[ensure-toly-boss] Symlink/junction failed, trying recursive copy:', e?.message || e);
+      try {
+        fs.cpSync(target, linkPath, { recursive: true });
+      } catch (e2) {
+        console.warn('[ensure-toly-boss] Copy fallback failed:', e2?.message || e2);
+        return;
       }
-    } catch {
-      fs.rmSync(linkPath, { recursive: true, force: true });
     }
   }
 
-  const type = os.platform() === 'win32' ? 'junction' : 'dir';
-  try {
-    fs.symlinkSync(target, linkPath, type);
-  } catch (e) {
-    console.warn('[ensure-toly-boss] Could not create symlink/junction:', e?.message || e);
-    return;
-  }
-
   if (hasMarker()) {
-    console.info('[ensure-toly-boss] Linked boss assets:\n  ' + linkPath + ' -> ' + target);
+    console.info(
+      wantCopy
+        ? '[ensure-toly-boss] Copied boss assets into:\n  ' + linkPath
+        : '[ensure-toly-boss] Linked boss assets:\n  ' + linkPath + ' -> ' + target
+    );
   } else {
-    console.warn('[ensure-toly-boss] Link created but Idle.fbx not found under:\n  ' + linkPath);
+    console.warn('[ensure-toly-boss] Idle.fbx still missing under:\n  ' + linkPath);
   }
 }
 

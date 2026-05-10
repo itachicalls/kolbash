@@ -12,7 +12,7 @@ export const TOTAL_WAVES = REGULAR_WAVES;
 
 /**
  * After clearing this wave, dare/store → countdown starts the finale boss.
- * TEMP: `1` = boss after wave 1 for testing. Ship: set to `REGULAR_WAVES` (12).
+ * Use `REGULAR_WAVES` for endgame finale; lower values are for faster local/Pages QA.
  */
 export const BOSS_TRIGGER_AFTER_WAVE = 1;
 

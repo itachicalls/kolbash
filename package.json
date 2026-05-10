@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "ensure-toly-boss": "node scripts/ensureTolyBossAssets.mjs",
+    "copy-toly-boss": "node scripts/ensureTolyBossAssets.mjs --copy",
     "predev": "node scripts/ensureTolyBossAssets.mjs",
     "prebuild": "node scripts/ensureTolyBossAssets.mjs",
     "dev": "vite",
