@@ -305,7 +305,8 @@ export class UIManager {
     } else {
       this.hidePauseMenu();
       if (this.elements.musicToggleBtn) {
-        this.elements.musicToggleBtn.style.display = 'flex';
+        const showMusic = this._gameMusic?.isFeatureEnabled?.() !== false;
+        this.elements.musicToggleBtn.style.display = showMusic ? 'flex' : 'none';
       }
     }
 
@@ -426,16 +427,19 @@ export class UIManager {
     const onEnded = () => finishVideo();
     video.addEventListener('ended', onEnded, { once: true });
 
+    const maybeFinish = () => finishVideo();
+
     video.addEventListener(
       'error',
       () => {
         setHint('CLIP ERROR — ESC / CLICK TO CONTINUE');
         console.warn('[KOL BASH] Cutscene video error', video.error);
+        try {
+          maybeFinish();
+        } catch (e) {}
       },
       { once: true }
     );
-
-    const maybeFinish = () => finishVideo();
 
     const onPointerUp = (e) => {
       try {
@@ -517,6 +521,7 @@ export class UIManager {
       } catch {
         loadFailed = true;
         setHint('CLIP FAILED TO LOAD — ESC OR CLICK');
+        maybeFinish();
       }
 
       try {
@@ -628,14 +633,29 @@ export class UIManager {
     const sub = this.elements.bossEncounterSub;
     const fill = this.elements.bossEncounterHpFill;
     if (title) {
-      if (payload.phase === 'intro') title.textContent = 'FINALE // SOMETHING OUTSIDE';
+      if (payload.bossKind === 'clock') {
+        if (payload.phase === 'adds') title.textContent = 'SECRET · DISCO CLOCK';
+        else if (payload.phase === 'vulnerable') title.textContent = 'STRIKE THE TOWER NOW';
+        else if (payload.phase === 'dead') title.textContent = 'THE CLOCK IS SILENCED';
+        else title.textContent = 'DISCO CLOCK';
+      } else if (payload.phase === 'intro') title.textContent = 'FINALE // SOMETHING OUTSIDE';
       else if (payload.phase === 'adds') title.textContent = 'CLEAR THE DANCE FLOOR';
       else if (payload.phase === 'vulnerable') title.textContent = 'NOW — HURT THE BOSS';
       else if (payload.phase === 'dead') title.textContent = 'DISCO TITAN DOWN';
       else title.textContent = 'BOSS';
     }
     if (sub) {
-      if (payload.phase === 'vulnerable' && payload.windowSec > 0) {
+      if (payload.bossKind === 'clock') {
+        if (payload.phase === 'vulnerable' && payload.windowSec > 0) {
+          sub.textContent = `Damage window · ${payload.windowSec.toFixed(1)}s`;
+        } else if (payload.phase === 'adds') {
+          sub.textContent = 'Shielded — clear ravers · dodge toxic barrage';
+        } else if (payload.phase === 'dead') {
+          sub.textContent = 'Something moves beyond the wall…';
+        } else {
+          sub.textContent = '';
+        }
+      } else if (payload.phase === 'vulnerable' && payload.windowSec > 0) {
         sub.textContent = `Damage window · ${payload.windowSec.toFixed(1)}s`;
       } else if (payload.phase === 'adds') {
         sub.textContent = 'Boss is shielded until every raver falls';
@@ -650,8 +670,13 @@ export class UIManager {
       fill.style.transform = `scaleX(${w})`;
     }
     if (this.elements.waveNumber) {
-      this.elements.waveNumber.textContent =
-        payload.phase === 'dead' ? `★ WIN ★` : `FINALE / ${BOSS_TRIGGER_AFTER_WAVE}`;
+      if (payload.bossKind === 'clock') {
+        this.elements.waveNumber.textContent =
+          payload.phase === 'dead' ? '★ EGG ★' : '★ SECRET BOSS ★';
+      } else {
+        this.elements.waveNumber.textContent =
+          payload.phase === 'dead' ? `★ WIN ★` : `FINALE / ${BOSS_TRIGGER_AFTER_WAVE}`;
+      }
     }
   }
 
@@ -736,7 +761,12 @@ export class UIManager {
   bindMusic(gameMusic) {
     this._gameMusic = gameMusic;
     const b = this.elements.musicToggleBtn;
-    if (!b || b.dataset.bound) return;
+    if (!b) return;
+    if (gameMusic?.isFeatureEnabled?.() === false) {
+      b.style.display = 'none';
+      return;
+    }
+    if (b.dataset.bound) return;
     b.dataset.bound = '1';
     const onTap = (e) => {
       if (e.button > 0) return;

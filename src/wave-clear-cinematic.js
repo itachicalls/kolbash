@@ -156,7 +156,7 @@ export class WaveClearCinematic {
   /** Await if mobile deferred preload — call before start(). */
   ensureLoaded() {
     if (this.isFullyLoaded()) return Promise.resolve();
-    return this.preload();
+    return this.preload({ serial: true });
   }
 
   /**

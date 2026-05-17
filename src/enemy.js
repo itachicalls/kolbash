@@ -74,8 +74,10 @@ export class EnemyManager {
     this.maxShootersPerWave = opts.maxShootersPerWave ?? 3;
     this.poolReplenishTo = opts.poolReplenishTo ?? 3;
     /**
-     * When true (mobile), never SkeletonUtils.clone during combat — use pool or spawn fallback mesh.
-     * Runtime FBX clones are a top cause of WebKit tab kills under load.
+     * Desktop-only: skip hit-flash recolor on materials (saves a few CPU traversals).
+     * Mobile: also staggers health-bar billboarding (see `update`).
+     * Actual skinned clones: always taken from the pool first, then `SkeletonUtils.clone`
+     * of the cached FBX — never the capsule fallback unless the FBX failed to load.
      */
     this.preferPoolOnly = opts.preferPoolOnly === true;
     /** Stagger skinned mixer updates across enemies (2× delta when sampled) to cut CPU on phones. */
@@ -318,10 +320,14 @@ export class EnemyManager {
   getPooledClone(path) {
     const pool = this.modelPool.get(path);
     if (pool && pool.length > 0) return pool.pop();
-    if (this.preferPoolOnly) return null;
     const modelData = this.modelCache.get(path);
-    if (modelData) return SkeletonUtils.clone(modelData.fbx);
-    return null;
+    if (!modelData) return null;
+    try {
+      return SkeletonUtils.clone(modelData.fbx);
+    } catch (e) {
+      console.warn('[EnemyManager] SkeletonUtils.clone failed', path, e);
+      return null;
+    }
   }
 
   // ── Visual Helpers ──

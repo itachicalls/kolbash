@@ -722,6 +722,53 @@ export class Arena {
     }
 
     this.scene.add(this.clockTowerRoot);
+
+    /** Raycast targets for Easter egg (shoot the clock). */
+    this.clockTowerRaycastMeshes = [];
+    this.clockTowerRoot.traverse((o) => {
+      if (o.isMesh) this.clockTowerRaycastMeshes.push(o);
+    });
+    this._clockRuinGroup = null;
+  }
+
+  /** Hide intact tower + show rubble (Easter egg cleared). */
+  ruinClockTower() {
+    if (!this.clockTowerRoot) return;
+    this.clockTowerRoot.visible = false;
+    this._ensureClockRuinRubble();
+    if (this._clockRuinGroup) this._clockRuinGroup.visible = true;
+  }
+
+  /** Restore tower mesh for a new run (title → game). */
+  restoreClockTowerVisual() {
+    if (this.clockTowerRoot) this.clockTowerRoot.visible = true;
+    if (this._clockRuinGroup) this._clockRuinGroup.visible = false;
+  }
+
+  _ensureClockRuinRubble() {
+    if (this._clockRuinGroup) return;
+    const g = new THREE.Group();
+    g.position.set(-46, 0, -8);
+    g.rotation.y = Math.PI / 2;
+    const rubbleMat = new THREE.MeshStandardMaterial({
+      color: 0x3a2848,
+      roughness: 0.88,
+      metalness: 0.12,
+      emissive: 0x220022,
+      emissiveIntensity: 0.18
+    });
+    for (let i = 0; i < 16; i++) {
+      const sx = 2.2 + Math.random() * 5;
+      const sy = 1.2 + Math.random() * 3.5;
+      const sz = 2 + Math.random() * 4;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), rubbleMat);
+      m.position.set((Math.random() - 0.5) * 11, sy * 0.35, (Math.random() - 0.5) * 9);
+      m.rotation.set((Math.random() - 0.5) * 0.4, Math.random() * Math.PI, (Math.random() - 0.5) * 0.5);
+      g.add(m);
+    }
+    this._clockRuinGroup = g;
+    this.scene.add(g);
+    this._clockRuinGroup.visible = false;
   }
 
   updateClockTower(deltaTime) {

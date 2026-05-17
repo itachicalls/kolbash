@@ -110,6 +110,21 @@ export class DareBackupDancers {
     }
   }
 
+  /** True when every dancer path in the current lineup is cached (after `preload`). */
+  isLineupCached() {
+    if (!this.useWebGlRenderer) return true;
+    return this._lineup.every((d) => this.cache.has(d.path));
+  }
+
+  /**
+   * Wait until lineup FBXs exist — blocks only if background prefetch missed (finishes before dare UI).
+   */
+  async ensureLoaded(options = {}) {
+    if (!this.useWebGlRenderer) return;
+    if (this.isLineupCached()) return;
+    await this.preload(options);
+  }
+
   async preload(options = {}) {
     if (!this.useWebGlRenderer) return;
 
@@ -286,5 +301,15 @@ export class DareBackupDancers {
       });
     }
     this.rows = [];
+
+    if (this.renderer) {
+      try {
+        this.renderer.dispose();
+        if (typeof this.renderer.forceContextLoss === 'function') this.renderer.forceContextLoss();
+      } catch (e) {
+        console.warn('DareBackupDancers: renderer dispose', e);
+      }
+      this.renderer = null;
+    }
   }
 }

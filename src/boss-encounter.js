@@ -55,8 +55,29 @@ export const BOSS_ANIM_EXTRA_PATHS = [
   '/models/boss/toly/attack animations/Wave Hip Hop Dance.fbx'
 ];
 
+/** Smaller subset for desktop default loads — laughs / hurt / death / strike; skips extra dance FBXs. Load all with `?high=1` or high-RAM preset. */
+export const BOSS_ANIM_EXTRA_PATHS_LITE = BOSS_ANIM_EXTRA_PATHS.slice(0, 4);
+
 /** @deprecated first candidate for preload list */
 export const BOSS_MODEL_PATH = BOSS_MODEL_CANDIDATES[0];
+
+/** Free GPU buffers for a discarded FBX root (animations extracted, or source after SkeletonUtils.clone). */
+function disposeFbxHierarchy(root) {
+  if (!root) return;
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry) return;
+    obj.geometry.dispose();
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      for (const k of Object.keys(mat)) {
+        const v = mat[k];
+        if (v && v.isTexture) v.dispose();
+      }
+      mat.dispose?.();
+    }
+  });
+}
 
 const PHASE = {
   INACTIVE: 'inactive',
@@ -171,6 +192,9 @@ export class BossEncounter {
     this.enemyManager = enemyManager;
     this.isMobile = opts.isMobile === true;
     this.textureBudgetMax = typeof opts.textureBudgetMax === 'number' ? opts.textureBudgetMax : 0;
+    /** When false, load `BOSS_ANIM_EXTRA_PATHS_LITE` only (much less decode + VRAM vs 8 FBXs). Full set with loadFullBossAnimExtras. */
+    this._bossAnimPaths =
+      opts.loadFullBossAnimExtras === true ? BOSS_ANIM_EXTRA_PATHS : [...BOSS_ANIM_EXTRA_PATHS_LITE];
 
     this.phase = PHASE.INACTIVE;
     this.roundIndex = 0;
@@ -302,6 +326,7 @@ export class BossEncounter {
       try {
         const fbx = await this._loadFbxUrl(url);
         mesh = SkeletonUtils.clone(fbx);
+        disposeFbxHierarchy(fbx);
         console.info('[Boss] Loaded character mesh:', url);
         break;
       } catch (e) {
@@ -375,12 +400,13 @@ export class BossEncounter {
 
     const allClips = collectAnimations(this._bossModel).map(retarget);
 
-    for (const url of BOSS_ANIM_EXTRA_PATHS) {
+    for (const url of this._bossAnimPaths) {
       try {
         const fbx = await this._loadFbxUrl(url);
         for (const raw of collectAnimations(fbx)) {
           allClips.push(retarget(raw));
         }
+        disposeFbxHierarchy(fbx);
       } catch (e) {
         console.warn('[Boss] Optional anim FBX skipped:', url);
       }
@@ -798,6 +824,7 @@ export class BossEncounter {
     this._skinnedRoot = null;
 
     if (this.root.parent) this.root.parent.remove(this.root);
+    disposeFbxHierarchy(this.root);
     this.root.clear();
     this._bossModel = null;
     this._emissiveMeshes.length = 0;

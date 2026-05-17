@@ -1,31 +1,42 @@
 /**
- * Background music: main disco bed + optional urgent boss bed.
+ * Background music: main disco bed + optional boss bed.
  *
- * Main: `/public/audio/disco-floor.mp3` then Kevin MacLeod — Funkorama (CC BY 4.0).
- * Boss: `/public/audio/boss-fight.mp3` then Kevin MacLeod — Volatile Reaction (CC BY 4.0).
- * Credits: https://incompetech.com/music/royalty-free/music.html
+ * **Local files only** (no CDN/stream fallbacks) — avoids stalls and unpredictable decode cost.
+ * Prefer **WebM/Opus** or **OGG**, then MP3 under `public/audio/`.
+ *
+ * Example:
+ * `ffmpeg -i disco-floor.mp3 -c:a libopus -b:a 64k public/audio/disco-floor.webm`
+ * `ffmpeg -i boss-fight.mp3 -c:a libopus -b:a 64k public/audio/boss-fight.webm`
  */
 
-const LOCAL_FIRST = '/audio/disco-floor.mp3';
-const FALLBACK_STREAM =
-  'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Funkorama.mp3';
-
-const BOSS_LOCAL_FIRST = '/audio/boss-fight.mp3';
-const BOSS_FALLBACK_STREAM =
-  'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Volatile%20Reaction.mp3';
+const MAIN_BEDS = ['/audio/disco-floor.webm', '/audio/disco-floor.ogg', '/audio/disco-floor.mp3'];
+const BOSS_BEDS = ['/audio/boss-fight.webm', '/audio/boss-fight.ogg', '/audio/boss-fight.mp3'];
 
 export class GameMusic {
-  constructor() {
-    this.audio = new Audio();
-    this.audio.loop = true;
-    this.audio.volume = 0.3;
-    this.audio.preload = 'auto';
+  /**
+   * @param {{ enabled?: boolean }} opts `enabled: false` — no `<audio>` (nobgm / lowperf).
+   */
+  constructor(opts = {}) {
+    this.enabled = opts.enabled !== false;
+    /** @type {HTMLAudioElement | null} */
+    this.audio = this.enabled ? new Audio() : null;
+    if (this.audio) {
+      this.audio.loop = true;
+      this.audio.volume = 0.3;
+      this.audio.preload = 'none';
+      this.audio.addEventListener('play', () => this._emit());
+      this.audio.addEventListener('pause', () => this._emit());
+    }
     this._started = false;
     this._userPaused = false;
     this._isBossTrack = false;
+    this._mainPick = 0;
+    this._bossPick = 0;
     this._onStateChange = null;
-    this.audio.addEventListener('play', () => this._emit());
-    this.audio.addEventListener('pause', () => this._emit());
+  }
+
+  isFeatureEnabled() {
+    return this.enabled;
   }
 
   setStateChangeHandler(fn) {
@@ -38,88 +49,123 @@ export class GameMusic {
     } catch (e) {}
   }
 
-  _applyMainLevelBed() {
-    const playFallback = () => {
-      this.audio.onerror = null;
-      this.audio.src = FALLBACK_STREAM;
-      this.audio.load();
-      if (!this._userPaused) this.audio.play().catch(() => {});
-      this._emit();
-    };
+  /**
+   * @param {string[]} paths
+   * @param {{ v: number }} pick in/out — start index hint, then last success
+   */
+  async _tryPlayPathList(paths, pick, volume) {
+    if (!this.enabled || !this.audio) return false;
+    const a = this.audio;
 
-    this.audio.onerror = () => {
-      if (this.audio.src && this.audio.src.includes('disco-floor')) {
-        this.audio.onerror = null;
-        playFallback();
+    for (let i = Math.max(0, Math.min(pick.v, paths.length - 1)); i < paths.length; i++) {
+      const path = paths[i];
+      const ok = await new Promise((resolve) => {
+        let settled = false;
+        const to = window.setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          resolve(false);
+        }, 12000);
+        const finish = (v) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(to);
+          resolve(v);
+        };
+        const bad = () => finish(false);
+
+        try {
+          a.onerror = bad;
+          a.src = path;
+          a.volume = volume;
+          a.load();
+        } catch {
+          finish(false);
+          return;
+        }
+
+        if (a.readyState >= 3) finish(true);
+        else {
+          a.addEventListener('canplaythrough', () => finish(true), { once: true });
+          a.addEventListener('loadeddata', () => finish(true), { once: true });
+          a.addEventListener('error', bad, { once: true });
+        }
+      });
+
+      a.onerror = null;
+
+      if (!ok) continue;
+
+      pick.v = i;
+      if (!this._userPaused) {
+        try {
+          await a.play();
+        } catch {
+          /* autoplay blocked until gesture */
+        }
       }
-    };
+      this._emit();
+      return true;
+    }
 
-    this.audio.src = LOCAL_FIRST;
-    this.audio.load();
-    if (!this._userPaused) this.audio.play().catch(() => {});
-    this._emit();
+    console.warn(
+      '[KOL BASH] Background music: no playable file — add disco-floor / boss-fight as .webm, .ogg, or .mp3 under public/audio/'
+    );
+    return false;
   }
 
   start() {
+    if (!this.enabled) return;
     if (this._started) return;
     this._started = true;
     this._userPaused = false;
     this._isBossTrack = false;
-    this._applyMainLevelBed();
+    void (async () => {
+      const pick = { v: this._mainPick };
+      await this._tryPlayPathList(MAIN_BEDS, pick, 0.3);
+      this._mainPick = pick.v;
+    })();
   }
 
-  /** Pause background bed so another element (e.g. cutscene video) can use audio. */
   pauseBedForCutscene() {
-    if (!this._started) return;
+    if (!this._started || !this.audio) return;
     try {
       this.audio.pause();
     } catch (e) {}
   }
 
-  /** Swap to boss fight bed while a run is active (call after `start()`). */
   enterBossFight() {
-    if (!this._started) return;
+    if (!this._started || !this.enabled || !this.audio) return;
     this._isBossTrack = true;
-    /** Boss bed is mastered hot — keep clearly under the main 0.3 bed so the swap is not a jump scare. */
-    this.audio.volume = 0.16;
-
-    const playFallback = () => {
-      this.audio.onerror = null;
-      this.audio.src = BOSS_FALLBACK_STREAM;
-      this.audio.load();
-      this.audio.volume = 0.16;
-      if (!this._userPaused) this.audio.play().catch(() => {});
-      this._emit();
-    };
-
-    this.audio.onerror = () => {
-      if (this.audio.src && this.audio.src.includes('boss-fight')) {
-        this.audio.onerror = null;
-        playFallback();
-      }
-    };
-
-    this.audio.src = BOSS_LOCAL_FIRST;
-    this.audio.load();
-    if (!this._userPaused) this.audio.play().catch(() => {});
-    this._emit();
+    void (async () => {
+      const pick = { v: this._bossPick };
+      await this._tryPlayPathList(BOSS_BEDS, pick, 0.16);
+      this._bossPick = pick.v;
+    })();
   }
 
-  /** Restore main level music (e.g. boss cleared or aborted). */
   leaveBossFight() {
-    if (!this._started || !this._isBossTrack) return;
+    if (!this._started || !this._isBossTrack || !this.audio) return;
     this._isBossTrack = false;
-    this.audio.volume = 0.3;
-    this._applyMainLevelBed();
+    void (async () => {
+      const pick = { v: this._mainPick };
+      await this._tryPlayPathList(MAIN_BEDS, pick, 0.3);
+      this._mainPick = pick.v;
+    })();
   }
 
-  /** True if the bed is running and not user-paused. */
   isAudiblyPlaying() {
-    return this._started && !this._userPaused && !this.audio.paused;
+    return !!(
+      this.enabled &&
+      this.audio &&
+      this._started &&
+      !this._userPaused &&
+      !this.audio.paused
+    );
   }
 
   toggle() {
-    if (!this._started) return;
+    if (!this._started || !this.enabled || !this.audio) return;
     if (this._userPaused || this.audio.paused) {
       this._userPaused = false;
       this.audio.play().catch(() => {});
@@ -131,26 +177,33 @@ export class GameMusic {
   }
 
   stop() {
+    if (!this.audio) {
+      this._started = false;
+      this._userPaused = false;
+      this._isBossTrack = false;
+      return;
+    }
     this.audio.pause();
-    this.audio.currentTime = 0;
+    try {
+      this.audio.removeAttribute('src');
+      this.audio.load();
+    } catch (e) {}
+    this.audio.onerror = null;
     this._started = false;
     this._userPaused = false;
     this._isBossTrack = false;
-    this.audio.onerror = null;
     this.audio.volume = 0.3;
     this._emit();
   }
 
-  /** Pause when tab hidden (saves CPU / audio on mobile). */
   suspendForBackground() {
     try {
-      this.audio.pause();
+      this.audio?.pause();
     } catch (e) {}
   }
 
-  /** Resume after tab visible if the bed was running and user did not pause. */
   resumeIfRunning() {
-    if (!this._started || this._userPaused) return;
+    if (!this._started || this._userPaused || !this.enabled || !this.audio) return;
     this.audio.play().catch(() => {});
   }
 }

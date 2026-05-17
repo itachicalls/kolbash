@@ -11,6 +11,7 @@ import { Weapon, WEAPON_DEFS } from './weapon.js';
 import { ItemManager } from './items.js';
 import { WaveManager, BOSS_TRIGGER_AFTER_WAVE } from './waves.js';
 import { BossEncounter } from './boss-encounter.js';
+import { ClockTowerEasterEgg } from './clock-tower-egg.js';
 import { UIManager, STORE_ITEMS } from './ui.js';
 import { Arena, LEVELS } from './arena.js';
 import { DeathScene } from './death-scene.js';
@@ -178,17 +179,22 @@ class Game {
     this._characterSelect = null;
     /** @type {CharacterProfilePreview | null} */
     this.profilePreview = null;
-    /** Which fighter's death / wave-clear / dare FBX set is currently resident in GPU caches. */
+    /** Which fighter's dossier-critical cinematics finished preloading (death + special-atk FBX decode). */
     this._cinematicReadyForId = null;
     /** @type {Promise<void> | null} */
     this._cinematicEnsurePromise = null;
     /** @type {ReturnType<typeof setTimeout> | null} */
     this._cinematicEnsureDebounce = null;
+    /** Invalidates stale background wave-clear / dare FBX prefetch when roster choice changes mid-load. */
+    this._heavyCinematicPrefetchToken = 0;
 
     /** After clearing wave `BOSS_TRIGGER_AFTER_WAVE` (see waves.js), countdown starts the finale boss. */
     this._pendingBossAfterDare = false;
     /** @type {BossEncounter | null} */
     this.bossEncounter = null;
+
+    /** @type {ClockTowerEasterEgg | null} */
+    this.clockTowerEgg = null;
 
     /** Desktop: ESC/P pause overlay */
     this.pauseMenuActive = false;
@@ -214,8 +220,27 @@ class Game {
     }, 70);
   }
 
+  /** Background: wave-clear + dare dancer FBXs (not dossier-critical — improves INP on agent select). */
+  _runHeavyCinematicPrefetch(targetId, token) {
+    void (async () => {
+      if (token !== this._heavyCinematicPrefetchToken) return;
+      if (this.selectedCharacterId !== targetId) return;
+      try {
+        await this.waveClear.preload({ serial: true });
+      } catch (e) {
+        console.warn('[KOL BASH] waveClear prefetch', e);
+      }
+      if (token !== this._heavyCinematicPrefetchToken || this.selectedCharacterId !== targetId) return;
+      try {
+        await this.dareDancers.preload({ serial: true });
+      } catch (e) {
+        console.warn('[KOL BASH] dareDancers prefetch', e);
+      }
+    })();
+  }
+
   /**
-   * Loads only the selected fighter's death, wave-clear, and dare-hero FBX (purges the previous fighter's clips).
+   * Critical path for START: death + disco special only. Wave-clear / dare FBX decode runs in `_runHeavyCinematicPrefetch`.
    */
   async ensureCinematicsForSelection() {
     const targetId = this.selectedCharacterId;
@@ -246,18 +271,21 @@ class Game {
 
     const c = ch.cinematic;
     this._cinematicEnsurePromise = (async () => {
+      this._heavyCinematicPrefetchToken = (this._heavyCinematicPrefetchToken || 0) + 1;
+      const prefetchTok = this._heavyCinematicPrefetchToken;
       try {
         await this.deathScene.setModelPath(c.deathModel);
         await this.deathScene.preload().catch(() => {});
+
         this.waveClear.setWavePaths(c.waveClearModels);
-        await this.waveClear.preload({ serial: true });
         this.dareDancers.setHeroPath(c.dareHeroModel);
-        await this.dareDancers.preload({ serial: true });
+
         const sp = ch.specialAttackModel || DEFAULT_SPECIAL_MODEL;
         await this.specialAttack.setModelPath(sp);
         await this.specialAttack.preload().catch(() => {});
         if (this.selectedCharacterId === targetId) {
           this._cinematicReadyForId = targetId;
+          this._runHeavyCinematicPrefetch(targetId, prefetchTok);
         } else {
           void this.ensureCinematicsForSelection();
         }
@@ -305,28 +333,39 @@ class Game {
       wallDecalWidth: m ? 224 : plentyRamDesktop ? 512 : 384,
       wallDecalHeight: m ? 112 : plentyRamDesktop ? 256 : 192,
       floorAnisotropy: m ? 1 : 12,
-      maxPlayerProjectiles: m ? (low ? 4 : 5) : 34,
-      maxEnemyProjectiles: m ? 2 : 10,
+      maxPlayerProjectiles: m ? (low ? 4 : 5) : stressedDesktop ? 16 : plentyRamDesktop ? 26 : 20,
+      maxEnemyProjectiles: m ? 2 : stressedDesktop ? 6 : 8,
       /** Fewer simultaneous skinned rigs = fewer mixers + GPU skinning passes (WebKit tab survival). */
-      maxEnemiesPerWave: m ? 3 : stressedDesktop ? 10 : leanDesktop || unknownRamDesktop || hc <= 6 ? 12 : 16,
+      maxEnemiesPerWave: m
+        ? 3
+        : stressedDesktop
+          ? 10
+          : leanDesktop || unknownRamDesktop || hc <= 6
+            ? 11
+            : plentyRamDesktop
+              ? 14
+              : 12,
       cylinderSegments: m ? (low ? 4 : 5) : 8,
       /**
        * Mobile: 1 warmed clone/type. Desktop: 2 when RAM is tight / unknown — cuts VRAM spikes.
        * Override `?high=1` for full punch.
        */
-      poolClonesPerModel: m ? 1 : stressedDesktop || leanDesktop || unknownRamDesktop ? 2 : 3,
+      poolClonesPerModel: m ? 1 : stressedDesktop || leanDesktop || unknownRamDesktop ? 2 : plentyRamDesktop ? 3 : 2,
       maxShootersPerWave: m ? 1 : 3,
-      maxCoinsAlive: m ? (low ? 12 : 14) : 110,
+      maxCoinsAlive: m ? (low ? 12 : 14) : plentyRamDesktop ? 88 : stressedDesktop ? 48 : 64,
       maxPowerupsAlive: m ? 2 : 10,
       allyBoltGeometryDetail: m ? 0 : 1,
       frameDeltaCap: m ? 0.048 : 0.06,
       /** Fewer GPU particles for disco special (mobile). */
-      specialMaxOrbs: m ? (low ? 6 : 10) : 90,
+      specialMaxOrbs: m ? (low ? 6 : 10) : plentyRamDesktop ? 64 : stressedDesktop ? 36 : 48,
       /**
-       * Max dimension (px) for embedded diffuse/normal/etc. on loaded skinned FBX (runtime downscale).
-       * `?high=1` raises; `?lowperf=1` lowers.
+       * Max dimension (px) for embedded diffuse/normal/etc. on skinned FBX (runtime downscale).
+       * Desktop default 768 — `?high=1` raises; `?lowperf=1` lowers.
        */
-      modelTextureBudget: m ? 512 : plentyRamDesktop ? 1024 : 768
+      modelTextureBudget: m ? (low ? 384 : 512) : plentyRamDesktop ? 1024 : 768,
+      /** Extra boss dance FBX pack (8 vs 4). On when reported >8 GiB RAM; `?high=1` enables. */
+      bossExtraAnimsFull: !m && plentyRamDesktop,
+      musicEnabled: true
     };
   }
 
@@ -351,6 +390,8 @@ class Game {
         if (!this.perf.maxFps || this.perf.maxFps <= 0) this.perf.maxFps = 60;
         else this.perf.maxFps = Math.min(this.perf.maxFps, 60);
         this.perf.modelTextureBudget = Math.min(this.perf.modelTextureBudget ?? 768, 384);
+        this.perf.bossExtraAnimsFull = false;
+        this.perf.musicEnabled = false;
       }
       /** Power systems: restore denser arena + pool + FBX map resolution (still serial FBX + deferred bake). */
       if (q.get('high') === '1' && !this.isMobile) {
@@ -361,7 +402,13 @@ class Game {
         this.perf.maxEnemiesPerWave = Math.max(this.perf.maxEnemiesPerWave, 16);
         this.perf.poolClonesPerModel = Math.max(this.perf.poolClonesPerModel, 3);
         this.perf.modelTextureBudget = Math.max(this.perf.modelTextureBudget ?? 768, 2048);
+        this.perf.maxPlayerProjectiles = Math.max(this.perf.maxPlayerProjectiles ?? 20, 32);
+        this.perf.specialMaxOrbs = Math.max(this.perf.specialMaxOrbs ?? 48, 80);
+        this.perf.maxCoinsAlive = Math.max(this.perf.maxCoinsAlive ?? 64, 100);
+        this.perf.maxEnemyProjectiles = Math.max(this.perf.maxEnemyProjectiles ?? 8, 10);
+        this.perf.bossExtraAnimsFull = true;
       }
+      if (q.get('nobgm') === '1') this.perf.musicEnabled = false;
     } catch (e) {}
   }
 
@@ -643,7 +690,7 @@ class Game {
       lowTierSpecial: this.isLowTierMobile,
       textureBudgetMax: this.perf.modelTextureBudget
     });
-    this.gameMusic = new GameMusic();
+    this.gameMusic = new GameMusic({ enabled: this.perf.musicEnabled !== false });
     this.waveClear = new WaveClearCinematic(this.scene, this.camera, {
       deferSkinned: this.isMobile,
       textureBudgetMax: this.perf.modelTextureBudget
@@ -831,9 +878,9 @@ class Game {
     this.enemyManager = new EnemyManager(this.scene, this.physicsWorld, {
       maxEnemyProjectiles: this.perf.maxEnemyProjectiles,
       maxShootersPerWave: this.perf.maxShootersPerWave,
-      /** One warmed clone per enemy FBX on phones — extras use cheap fallback (stable VRAM). */
+      /** One warmed clone per FBX on phones — extras are skinned clones from cache, not capsule fallbacks. */
       poolReplenishTo: this.isMobile ? 1 : Math.max(2, this.perf.poolClonesPerModel + 1),
-      /** Never clone skinned FBX during combat on phones — pool + cheap fallback only. */
+      /** Skip expensive per-mesh hit-flash on mobile; stagger health-bar billboards. */
       preferPoolOnly: this.isMobile,
       /** Halves AnimationMixer CPU on phones (staggered 2× delta when sampled). */
       mixerHalfRateMobile: this.isMobile,
@@ -859,7 +906,8 @@ class Game {
 
     this.bossEncounter = new BossEncounter(this.scene, this.enemyManager, {
       isMobile: this.isMobile,
-      textureBudgetMax: this.perf.modelTextureBudget
+      textureBudgetMax: this.perf.modelTextureBudget,
+      loadFullBossAnimExtras: this.perf.bossExtraAnimsFull === true
     });
     this.bossEncounter.onVictory = () => {
       this.gameMusic?.leaveBossFight();
@@ -869,6 +917,19 @@ class Game {
       this.showVictory();
     };
     this.bossEncounter.onUiUpdate = (payload) => this.ui.setBossEncounterHud(payload);
+
+    this.clockTowerEgg = new ClockTowerEasterEgg(this.scene, this.enemyManager, this.arena, {
+      isMobile: this.isMobile,
+      getWaveManager: () => this.waveManager,
+      onUiUpdate: (payload) => this.ui.setBossEncounterHud(payload),
+      onDefeated: () => this._onClockTowerEggDefeated()
+    });
+    this.clockTowerEgg.setPlayerHitCallback((dmg) => {
+      if (!this.isRunning || this.player.isDead) return;
+      this.player.takeDamage(dmg);
+      this.ui.updateHealth(this.player.health, this.player.maxHealth);
+      this.screenShake = Math.min(this.screenShake + 0.28, 1);
+    });
 
     this.waveManager.onWaveStart = (wave, taunt, levelChanged) => {
       this.ui.updateWave(wave);
@@ -905,7 +966,12 @@ class Game {
         };
         requestAnimationFrame(drainPool);
       } else {
-        this.enemyManager.replenishPool();
+        const drainPoolDesk = () => {
+          if (!this.modelsReady || !this.enemyManager) return;
+          if (!this.enemyManager.replenishPoolStep()) return;
+          requestAnimationFrame(drainPoolDesk);
+        };
+        requestAnimationFrame(drainPoolDesk);
       }
       if (wave === BOSS_TRIGGER_AFTER_WAVE) {
         this._pendingBossAfterDare = true;
@@ -1226,6 +1292,8 @@ class Game {
     this.ui.hidePauseMenu();
     this._pendingBossAfterDare = false;
     this.bossEncounter?.reset();
+    this.clockTowerEgg?.reset();
+    this.arena?.restoreClockTowerVisual?.();
     this.ui.clearBossEncounterHud();
     this.isRunning = false;
     this.gameMusic?.stop();
@@ -1444,6 +1512,8 @@ class Game {
     this.waveManager.reset();
     this._pendingBossAfterDare = false;
     this.bossEncounter?.reset();
+    this.clockTowerEgg?.reset();
+    this.arena.restoreClockTowerVisual();
     this.ui.clearBossEncounterHud();
     this.gameMusic?.leaveBossFight();
     this.clearAllyShips();
@@ -1478,6 +1548,17 @@ class Game {
     this.weapon.isHolding = false;
 
     this.animate();
+    void this.runWaveCountdownThenStartWave();
+  }
+
+  /** Clock tower easter egg defeated → rubble, then same pipeline as post–wave-12 dare into the Toly finale. */
+  async _onClockTowerEggDefeated() {
+    this.ui.clearBossEncounterHud();
+    this.arena.ruinClockTower();
+    this.ui.showLevelEffect('THE CLOCK TOWER FALLS…');
+    await new Promise((r) => setTimeout(r, 2200));
+    this._waveCountdownSerial = (this._waveCountdownSerial || 0) + 1;
+    this._pendingBossAfterDare = true;
     void this.runWaveCountdownThenStartWave();
   }
 
@@ -1623,27 +1704,37 @@ class Game {
       document.exitPointerLock();
     }
 
-    this.ui.showDareScreen(
-      wave,
-      () => {
-        this.dareDancers.hide();
-        this.resumeNextWave();
-      },
-      () => {
-        this.dareDancers.hide();
-        this.showStore();
-      },
-      () => {
-        this.dareDancers.hide();
-        this.bailFromDareToTitle();
-      },
-      { finaleLeadIn: wave === BOSS_TRIGGER_AFTER_WAVE }
-    );
-    if (this.dareDancers.useWebGlRenderer) {
-      requestAnimationFrame(() => this.dareDancers.show());
-    } else {
-      this.dareDancers.show();
-    }
+    void (async () => {
+      try {
+        if (this.dareDancers?.useWebGlRenderer) {
+          await this.dareDancers.ensureLoaded({ serial: true });
+        }
+      } catch (e) {
+        console.warn('[KOL BASH] dare ensureLoaded', e);
+      }
+
+      this.ui.showDareScreen(
+        wave,
+        () => {
+          this.dareDancers.hide();
+          this.resumeNextWave();
+        },
+        () => {
+          this.dareDancers.hide();
+          this.showStore();
+        },
+        () => {
+          this.dareDancers.hide();
+          this.bailFromDareToTitle();
+        },
+        { finaleLeadIn: wave === BOSS_TRIGGER_AFTER_WAVE }
+      );
+      if (this.dareDancers.useWebGlRenderer) {
+        requestAnimationFrame(() => this.dareDancers.show());
+      } else {
+        this.dareDancers.show();
+      }
+    })();
   }
 
   showStore() {
@@ -1769,6 +1860,10 @@ class Game {
 
     const muzzlePos = this.weapon.getMuzzleWorldPosition();
 
+    if (!this.bossEncounter?.isActive()) {
+      this.clockTowerEgg?.tryActivateFromShot(muzzlePos, dir);
+    }
+
     let closestEnemy = null;
     let closestDistSq = 60 * 60;
     const dx = dir.x, dz = dir.z;
@@ -1822,6 +1917,27 @@ class Game {
           }
         });
       }
+    } else if (this.clockTowerEgg?.isVulnerableForDamage()) {
+      const dealt = this.clockTowerEgg.tryHitscan(muzzlePos, dir, this.weapon.damage);
+      if (dealt > 0) {
+        this.damageDealt += dealt;
+        this.weapon.playHitSound();
+        this._hitTarget = this._hitTarget || new THREE.Vector3();
+        this.clockTowerEgg.getFxHitTarget(this._hitTarget);
+        this.weapon.spawnProjectile(muzzlePos, this._hitTarget, () => {
+          if (this.currentWeapon === 'rocket') {
+            this.rocketAOE(this._hitTarget);
+          }
+        });
+      } else {
+        this._missTarget = this._missTarget || new THREE.Vector3();
+        this._missTarget.set(muzzlePos.x + dir.x * 25, muzzlePos.y + dir.y * 25, muzzlePos.z + dir.z * 25);
+        this.weapon.spawnProjectile(muzzlePos, this._missTarget, () => {
+          if (this.currentWeapon === 'rocket') {
+            this.rocketAOE(this._missTarget);
+          }
+        });
+      }
     } else {
       this._missTarget = this._missTarget || new THREE.Vector3();
       this._missTarget.set(muzzlePos.x + dir.x * 25, muzzlePos.y + dir.y * 25, muzzlePos.z + dir.z * 25);
@@ -1850,6 +1966,10 @@ class Game {
     if (this.bossEncounter?.isActive()) {
       const bd = this.bossEncounter.tryAoE(center.x, center.z, def.aoeRadius, def.aoeDamage);
       if (bd > 0) this.damageDealt += bd;
+    }
+    if (this.clockTowerEgg?.isVulnerableForDamage()) {
+      const cd = this.clockTowerEgg.tryAoE(center.x, center.z, def.aoeRadius, def.aoeDamage);
+      if (cd > 0) this.damageDealt += cd;
     }
     this.screenShake = Math.min(this.screenShake + 0.6, 1.2);
   }
@@ -2177,10 +2297,15 @@ class Game {
       onDamage: (amt) => {
         this.damageDealt += amt;
       },
-      tryDamageFinaleBoss: (kind, px, py, pz, dmg) =>
-        this.bossEncounter?.isActive() && this.bossEncounter.isVulnerable()
-          ? this.bossEncounter.trySpecialHit(kind, px, py, pz, dmg)
-          : 0,
+      tryDamageFinaleBoss: (kind, px, py, pz, dmg) => {
+        if (this.bossEncounter?.isActive() && this.bossEncounter.isVulnerable()) {
+          return this.bossEncounter.trySpecialHit(kind, px, py, pz, dmg);
+        }
+        if (this.clockTowerEgg?.isVulnerableForDamage()) {
+          return this.clockTowerEgg.trySpecialHit(kind, px, py, pz, dmg);
+        }
+        return 0;
+      },
       onEnd: () => {
         this.specialAttackActive = false;
         this._mobileDbg?.mark('SPECIAL_END', '');
@@ -2204,6 +2329,7 @@ class Game {
     this._pendingSpecialStart = null;
     this._pendingBossAfterDare = false;
     this.bossEncounter?.reset();
+    this.clockTowerEgg?.reset();
     this.ui.clearBossEncounterHud();
     this.gameMusic?.leaveBossFight();
     this._mobileDbg?.mark('DEATH_SEQUENCE', '');
@@ -2394,6 +2520,14 @@ class Game {
         this.updateAllyShips(delta, playerPos);
         this.updateLevelEffects(delta, playerPos);
 
+        if (this.clockTowerEgg?.isActive()) this.clockTowerEgg.update(delta, playerPos);
+        const toxSp = this.clockTowerEgg?.pollToxicDamage(playerPos.x, playerPos.z, delta) ?? 0;
+        if (toxSp > 0 && !this.player.isDead) {
+          this.player.takeDamage(toxSp);
+          this.ui.updateHealth(this.player.health, this.player.maxHealth);
+          this.screenShake = Math.min(this.screenShake + 0.12, 1);
+        }
+
         if (this._uiTick === undefined) this._uiTick = 0;
         this._uiTick++;
         if (this._uiTick % 3 === 0) {
@@ -2414,6 +2548,13 @@ class Game {
       this.itemManager.update(delta, playerPos);
       this.handleItemPickups(playerPos);
       if (this.bossEncounter?.isActive()) this.bossEncounter.update(delta);
+      if (this.clockTowerEgg?.isActive()) this.clockTowerEgg.update(delta, playerPos);
+      const tox = this.clockTowerEgg?.pollToxicDamage(playerPos.x, playerPos.z, delta) ?? 0;
+      if (tox > 0 && !this.player.isDead) {
+        this.player.takeDamage(tox);
+        this.ui.updateHealth(this.player.health, this.player.maxHealth);
+        this.screenShake = Math.min(this.screenShake + 0.12, 1);
+      }
       this.waveManager.update(delta, playerPos);
       this.updateAllyShips(delta, playerPos);
       this.updateLevelEffects(delta, playerPos);
