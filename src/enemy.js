@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { applyFbxTextureBudget } from './fbx-texture-budget.js';
 import { getSharedAudioContext } from './shared-audio.js';
 
 export class EnemyManager {
@@ -99,6 +100,9 @@ export class EnemyManager {
     this._hbBgGeoB = null;
     this._hbFillGeoN = null;
     this._hbFillGeoB = null;
+
+    /** 0 = skip runtime downscale (debug); otherwise max dimension for embedded FBX maps. */
+    this.textureBudgetMax = opts.textureBudgetMax ?? 0;
   }
 
   _ensureHealthBarGeometries() {
@@ -175,6 +179,13 @@ export class EnemyManager {
       this.fbxLoader.load(
         path,
         (fbx) => {
+          if (this.textureBudgetMax > 0) {
+            try {
+              applyFbxTextureBudget(fbx, { maxSize: this.textureBudgetMax });
+            } catch (e) {
+              console.warn('[KOL BASH] FBX texture budget', path, e);
+            }
+          }
           const box = new THREE.Box3().setFromObject(fbx);
           const size = box.getSize(new THREE.Vector3());
 

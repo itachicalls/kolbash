@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { applyFbxTextureBudget } from './fbx-texture-budget.js';
 
 /** Encode each path segment so Mixamo names with spaces work in fetch(). */
 export function encodeBossAssetUrl(url) {
@@ -163,12 +164,13 @@ export class BossEncounter {
   /**
    * @param {THREE.Scene} scene
    * @param {import('./enemy.js').EnemyManager} enemyManager
-   * @param {{ isMobile?: boolean }} [opts]
+   * @param {{ isMobile?: boolean; textureBudgetMax?: number }} [opts]
    */
   constructor(scene, enemyManager, opts = {}) {
     this.scene = scene;
     this.enemyManager = enemyManager;
     this.isMobile = opts.isMobile === true;
+    this.textureBudgetMax = typeof opts.textureBudgetMax === 'number' ? opts.textureBudgetMax : 0;
 
     this.phase = PHASE.INACTIVE;
     this.roundIndex = 0;
@@ -278,9 +280,17 @@ export class BossEncounter {
 
   async _loadFbxUrl(url) {
     const src = encodeBossAssetUrl(url);
-    return new Promise((resolve, reject) => {
+    const fbx = await new Promise((resolve, reject) => {
       this.loader.load(src, resolve, undefined, reject);
     });
+    if (this.textureBudgetMax > 0) {
+      try {
+        applyFbxTextureBudget(fbx, { maxSize: this.textureBudgetMax });
+      } catch (e) {
+        console.warn('[Boss] texture budget', url, e);
+      }
+    }
+    return fbx;
   }
 
   async _ensureBossVisual() {

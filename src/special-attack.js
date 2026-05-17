@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { applyFbxTextureBudget } from './fbx-texture-budget.js';
 
 export const SPECIAL_CHARGE_KILLS = 11;
 
@@ -93,7 +94,7 @@ function pickClip(animations) {
 export class SpecialAttackController {
   /**
    * @param {THREE.Scene} scene
-   * @param {{ maxOrbs?: number; lightMode?: boolean; lowTierSpecial?: boolean }} [opts]
+   * @param {{ maxOrbs?: number; lightMode?: boolean; lowTierSpecial?: boolean; textureBudgetMax?: number }} [opts]
    *   lightMode throttles burst work per frame (mobile).
    *   lowTierSpecial: same hero FBX + vortex look; shared orb GPU buffers + slightly lighter sphere mesh.
    *   skipHeroFbx: no NorthernSoul FBX — cheap placeholder mesh + vortex only (mobile tab survival).
@@ -101,6 +102,7 @@ export class SpecialAttackController {
   constructor(scene, opts = {}) {
     this.scene = scene;
     this._skipHeroFbx = opts.skipHeroFbx === true;
+    this._textureBudgetMax = typeof opts.textureBudgetMax === 'number' ? opts.textureBudgetMax : 0;
     this.loader = new FBXLoader();
     this.cache = null;
     this.loading = null;
@@ -222,6 +224,13 @@ export class SpecialAttackController {
       this.loader.load(
         url,
         (fbx) => {
+          if (this._textureBudgetMax > 0) {
+            try {
+              applyFbxTextureBudget(fbx, { maxSize: this._textureBudgetMax });
+            } catch (e) {
+              console.warn('SpecialAttack: texture budget', e);
+            }
+          }
           fbx.updateMatrixWorld(true);
           const animations = collectAnimations(fbx);
           const box = new THREE.Box3().setFromObject(fbx);

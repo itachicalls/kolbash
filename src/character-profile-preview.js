@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { applyFbxTextureBudget } from './fbx-texture-budget.js';
 
 const TARGET_H = 1.35;
 
@@ -35,10 +36,12 @@ function pickProfileClip(animations) {
 export class CharacterProfilePreview {
   /**
    * @param {HTMLElement | null} mount
+   * @param {{ textureBudgetMax?: number }} [opts]
    */
-  constructor(mount) {
+  constructor(mount, opts = {}) {
     this.mount = mount;
     this.loader = new FBXLoader();
+    this._textureBudgetMax = typeof opts.textureBudgetMax === 'number' ? opts.textureBudgetMax : 0;
     this.renderer = null;
     this.scene = null;
     this.camera = null;
@@ -123,6 +126,14 @@ export class CharacterProfilePreview {
       const fbx = await new Promise((resolve, reject) => {
         this.loader.load(url, resolve, undefined, reject);
       });
+
+      if (this._textureBudgetMax > 0) {
+        try {
+          applyFbxTextureBudget(fbx, { maxSize: this._textureBudgetMax });
+        } catch (e) {
+          console.warn('CharacterProfilePreview: texture budget', e);
+        }
+      }
 
       if (gen !== this._loadGen) {
         disposeModelGraph(fbx);

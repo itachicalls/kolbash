@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { applyFbxTextureBudget } from './fbx-texture-budget.js';
 
 /** Default (Serena V.) wave-clear clips — copied into each instance; roster may replace paths. */
 export const WAVE_CLEAR_MODELS = [
@@ -71,7 +72,7 @@ function disposeModelGraph(root) {
 
 export class WaveClearCinematic {
   /**
-   * @param {{ skipFbx?: boolean; deferSkinned?: boolean }} [opts]
+   * @param {{ skipFbx?: boolean; deferSkinned?: boolean; textureBudgetMax?: number }} [opts]
    *   skipFbx: no victory FBX — short camera zoom only.
    *   deferSkinned: split clone / mixer across frames (mobile).
    */
@@ -80,6 +81,7 @@ export class WaveClearCinematic {
     this.camera = camera;
     this._skipFbx = opts.skipFbx === true;
     this._deferSkinned = opts.deferSkinned === true;
+    this._textureBudgetMax = typeof opts.textureBudgetMax === 'number' ? opts.textureBudgetMax : 0;
     /** Saved look target when `_skipFbx` zoom runs without a clip model. */
     this._liteLook = new THREE.Vector3();
     this.loader = new FBXLoader();
@@ -171,6 +173,13 @@ export class WaveClearCinematic {
           path,
           (fbx) => {
             fbx.updateMatrixWorld(true);
+            if (this._textureBudgetMax > 0) {
+              try {
+                applyFbxTextureBudget(fbx, { maxSize: this._textureBudgetMax });
+              } catch (e) {
+                console.warn('WaveClearCinematic: texture budget', e);
+              }
+            }
             const animations = collectAnimations(fbx);
             const box = new THREE.Box3().setFromObject(fbx);
             const size = box.getSize(new THREE.Vector3());

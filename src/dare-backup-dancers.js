@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { applyFbxTextureBudget } from './fbx-texture-budget.js';
 
 /** Dance-only lineup: Hip Hop hero + two flanking enemies (no center figure behind the hero). */
 export const DARE_DANCER_MODELS = [
@@ -47,12 +48,13 @@ function pickDanceClip(animations) {
 
 export class DareBackupDancers {
   /**
-   * @param {{ useWebGlRenderer?: boolean }} [opts] Pass `useWebGlRenderer: false` on mobile — a second
+   * @param {{ useWebGlRenderer?: boolean; textureBudgetMax?: number }} [opts] Pass `useWebGlRenderer: false` on mobile — a second
    * WebGL context behind the dare UI reliably blows iOS WebKit memory limits (tab reload / “restart”).
    */
   constructor(opts = {}) {
     /** When false, skip extra WebGL + FBX clones; CSS overlay only (see main Game.isMobile). */
     this.useWebGlRenderer = opts.useWebGlRenderer !== false;
+    this._textureBudgetMax = typeof opts.textureBudgetMax === 'number' ? opts.textureBudgetMax : 0;
     this.loader = new FBXLoader();
     this.cache = new Map();
     this.scene = new THREE.Scene();
@@ -119,6 +121,13 @@ export class DareBackupDancers {
         const data = await new Promise((resolve, reject) => {
           this.loader.load(def.path, resolve, undefined, reject);
         });
+        if (this._textureBudgetMax > 0) {
+          try {
+            applyFbxTextureBudget(data, { maxSize: this._textureBudgetMax });
+          } catch (e) {
+            console.warn('DareBackupDancers: texture budget', e);
+          }
+        }
         let animations = data.animations || [];
         data.traverse((ch) => {
           if (ch.animations?.length) animations = animations.concat(ch.animations);

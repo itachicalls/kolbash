@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { applyFbxTextureBudget } from './fbx-texture-budget.js';
 
 const TARGET_HEIGHT = 1.75;
 
@@ -33,13 +34,15 @@ function pickDeathClip(animations) {
 
 export class DeathScene {
   /**
-   * @param {{ skipSkinnedHero?: boolean; deferSkinned?: boolean }} [opts]
+   * @param {{ skipSkinnedHero?: boolean; deferSkinned?: boolean; textureBudgetMax?: number }} [opts]
    *   skipSkinnedHero: skip Dying.fbx — instant callback in start().
    *   deferSkinned: split clone / mixer across frames (mobile tab survival).
+   *   textureBudgetMax: downscale embedded maps on loaded FBX (0 = skip).
    */
   constructor(opts = {}) {
     this._skipSkinned = opts.skipSkinnedHero === true;
     this._deferSkinned = opts.deferSkinned === true;
+    this._textureBudgetMax = typeof opts.textureBudgetMax === 'number' ? opts.textureBudgetMax : 0;
     this.loader = new FBXLoader();
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x030208);
@@ -130,6 +133,13 @@ export class DeathScene {
       this.loader.load(
         url,
         (fbx) => {
+          if (this._textureBudgetMax > 0) {
+            try {
+              applyFbxTextureBudget(fbx, { maxSize: this._textureBudgetMax });
+            } catch (e) {
+              console.warn('DeathScene: texture budget', e);
+            }
+          }
           let animations = fbx.animations || [];
           fbx.traverse((child) => {
             if (child.animations?.length) animations = animations.concat(child.animations);

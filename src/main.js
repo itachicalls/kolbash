@@ -98,14 +98,22 @@ class Game {
       ('ontouchstart' in window) || (typeof navigator !== 'undefined' && (navigator.maxTouchPoints ?? 0) > 0);
     const coarsePointer =
       typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    const hoverNone =
+      typeof window.matchMedia === 'function' && window.matchMedia('(hover: none)').matches;
     const narrowViewport = typeof window !== 'undefined' && window.innerWidth < 1400;
-    this.isMobile = touchCapable && (coarsePointer || narrowViewport);
+    /** Phones/tablets: touch + (coarse pointer, small viewport, or no hover — catches many iPads / touch primary devices misclassified as desktop). */
+    this.isMobile = touchCapable && (coarsePointer || narrowViewport || hoverNone);
     const dm = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined;
     const hc = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined;
     this.isLowTierMobile =
       this.isMobile && (((dm != null && dm <= 4) || (hc != null && hc <= 4)));
 
     this.perf = this._buildPerfProfile();
+    this._applyUrlPerfOverrides();
+
+    /** FPS pacing when `perf.maxFps` > 0 (uses wall clock instead of THREE.Clock for sim dt). */
+    this._animThrottleAnchor = null;
+    this._animWallPrev = null;
 
     this.currentLevelEffect = null;
     this.poisonTickTime = 0;
@@ -187,6 +195,9 @@ class Game {
     this._pauseSavedInputFrozen = false;
     /** @type {((e: KeyboardEvent) => void) | null} */
     this._boundDesktopKeydown = null;
+
+    /** Desktop shader compile — may run in idle; startGame calls `_ensureShaderPrewarm` before play. */
+    this._shaderPrewarmDone = false;
   }
 
   isCinematicReadyForSelection() {
@@ -239,9 +250,9 @@ class Game {
         await this.deathScene.setModelPath(c.deathModel);
         await this.deathScene.preload().catch(() => {});
         this.waveClear.setWavePaths(c.waveClearModels);
-        await this.waveClear.preload(this.isMobile ? { serial: true } : {}).catch(() => {});
+        await this.waveClear.preload({ serial: true });
         this.dareDancers.setHeroPath(c.dareHeroModel);
-        await this.dareDancers.preload(this.isMobile ? { serial: true } : {}).catch(() => {});
+        await this.dareDancers.preload({ serial: true });
         const sp = ch.specialAttackModel || DEFAULT_SPECIAL_MODEL;
         await this.specialAttack.setModelPath(sp);
         await this.specialAttack.preload().catch(() => {});
@@ -265,34 +276,166 @@ class Game {
   _buildPerfProfile() {
     const m = this.isMobile;
     const low = this.isLowTierMobile;
+    const dm = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined;
+    const hc = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined;
+    /** RAM reported and ≤8 GiB — lighter canvas bakes + fewer simultaneous enemies. */
+    const leanDesktop = !m && dm != null && dm <= 8;
+    /** ≤4 GiB — aggressive cap (tab survival > max crowd). */
+    const stressedDesktop = !m && dm != null && dm <= 4;
+    /** Firefox / Safari often omit `deviceMemory` — avoid worst-case 1024²×6 prebake + 1.75 DPR. */
+    const unknownRamDesktop = !m && dm == null;
+    const plentyRamDesktop = !m && dm != null && dm > 8;
     return {
       /** iOS WebKit: DPR>1 multiplies VRAM ~×4 per step — keep draw buffer tiny on phones. */
-      maxPixelRatio: m ? 1 : Math.min(1.75, window.devicePixelRatio || 1),
+      maxPixelRatio: m
+        ? 1
+        : Math.min(stressedDesktop ? 1 : leanDesktop || unknownRamDesktop ? 1.25 : 1.5, window.devicePixelRatio || 1),
       /** Prefer integrated/low-power GPU path on phones to reduce driver OOM / context loss. */
       powerPreference: m ? 'low-power' : 'high-performance',
+      /**
+       * Max simulation + render steps per second (0 = uncapped, use rAF + THREE.Clock). Reduces GPU/driver load on high-Hz panels.
+       * Override with URL `?fps=120`, `?fps=30`, or `?fps=0` (uncapped).
+       */
+      maxFps: 60,
       /**
        * Procedural arena CanvasTextures (see arena.js). Keep ≤512 on phone GPUs; FBX maps in /public/models
        * must be re-exported small in Blender — Three does not downscale embedded textures automatically.
        */
-      floorTextureSize: m ? 256 : 1024,
-      wallDecalWidth: m ? 224 : 512,
-      wallDecalHeight: m ? 112 : 256,
+      floorTextureSize: m ? 256 : plentyRamDesktop ? 1024 : 768,
+      wallDecalWidth: m ? 224 : plentyRamDesktop ? 512 : 384,
+      wallDecalHeight: m ? 112 : plentyRamDesktop ? 256 : 192,
       floorAnisotropy: m ? 1 : 12,
       maxPlayerProjectiles: m ? (low ? 4 : 5) : 34,
       maxEnemyProjectiles: m ? 2 : 10,
       /** Fewer simultaneous skinned rigs = fewer mixers + GPU skinning passes (WebKit tab survival). */
-      maxEnemiesPerWave: m ? 3 : 16,
+      maxEnemiesPerWave: m ? 3 : stressedDesktop ? 10 : leanDesktop || unknownRamDesktop || hc <= 6 ? 12 : 16,
       cylinderSegments: m ? (low ? 4 : 5) : 8,
-      /** Mobile: 2 warmed clones/type after serial load — enough variety without VRAM like desktop×3. */
-      poolClonesPerModel: m ? 1 : 3,
+      /**
+       * Mobile: 1 warmed clone/type. Desktop: 2 when RAM is tight / unknown — cuts VRAM spikes.
+       * Override `?high=1` for full punch.
+       */
+      poolClonesPerModel: m ? 1 : stressedDesktop || leanDesktop || unknownRamDesktop ? 2 : 3,
       maxShootersPerWave: m ? 1 : 3,
       maxCoinsAlive: m ? (low ? 12 : 14) : 110,
       maxPowerupsAlive: m ? 2 : 10,
       allyBoltGeometryDetail: m ? 0 : 1,
       frameDeltaCap: m ? 0.048 : 0.06,
       /** Fewer GPU particles for disco special (mobile). */
-      specialMaxOrbs: m ? (low ? 6 : 10) : 90
+      specialMaxOrbs: m ? (low ? 6 : 10) : 90,
+      /**
+       * Max dimension (px) for embedded diffuse/normal/etc. on loaded skinned FBX (runtime downscale).
+       * `?high=1` raises; `?lowperf=1` lowers.
+       */
+      modelTextureBudget: m ? 512 : plentyRamDesktop ? 1024 : 768
     };
+  }
+
+  /**
+   * Query overrides: `?fps=0` uncapped, `?fps=72` cap, `?lowperf=1` force lighter tier (emergency on bad GPUs).
+   */
+  _applyUrlPerfOverrides() {
+    try {
+      if (typeof window === 'undefined' || !window.location) return;
+      const q = new URLSearchParams(window.location.search);
+      const fps = q.get('fps');
+      if (fps === '0' || fps === 'off' || fps === 'uncapped') this.perf.maxFps = 0;
+      else if (fps != null && fps !== '') {
+        const n = Number(fps);
+        if (Number.isFinite(n) && n >= 30 && n <= 240) this.perf.maxFps = n;
+      }
+      if (q.get('lowperf') === '1') {
+        this.perf.maxPixelRatio = Math.min(this.perf.maxPixelRatio, 1);
+        this.perf.floorTextureSize = Math.min(this.perf.floorTextureSize, 512);
+        this.perf.wallDecalWidth = Math.min(this.perf.wallDecalWidth, 320);
+        this.perf.wallDecalHeight = Math.min(this.perf.wallDecalHeight, 160);
+        if (!this.perf.maxFps || this.perf.maxFps <= 0) this.perf.maxFps = 60;
+        else this.perf.maxFps = Math.min(this.perf.maxFps, 60);
+        this.perf.modelTextureBudget = Math.min(this.perf.modelTextureBudget ?? 768, 384);
+      }
+      /** Power systems: restore denser arena + pool + FBX map resolution (still serial FBX + deferred bake). */
+      if (q.get('high') === '1' && !this.isMobile) {
+        this.perf.floorTextureSize = 1024;
+        this.perf.wallDecalWidth = 512;
+        this.perf.wallDecalHeight = 256;
+        this.perf.maxPixelRatio = Math.min(1.75, window.devicePixelRatio || 1);
+        this.perf.maxEnemiesPerWave = Math.max(this.perf.maxEnemiesPerWave, 16);
+        this.perf.poolClonesPerModel = Math.max(this.perf.poolClonesPerModel, 3);
+        this.perf.modelTextureBudget = Math.max(this.perf.modelTextureBudget ?? 768, 2048);
+      }
+    } catch (e) {}
+  }
+
+  /** @returns {boolean} if this rAF tick should skip simulation (FPS cap). */
+  _throttleFpsSkip(now) {
+    const maxFps = this.perf.maxFps;
+    if (!maxFps || maxFps <= 0) return false;
+    const minMs = 1000 / maxFps;
+    if (this._animThrottleAnchor != null && now - this._animThrottleAnchor < minMs) return true;
+    this._animThrottleAnchor = now;
+    return false;
+  }
+
+  /** Simulation delta for this frame; paired with `_throttleFpsSkip` when maxFps is set. */
+  _computeSimDelta(now) {
+    const maxFps = this.perf.maxFps;
+    if (maxFps > 0) {
+      if (this._animWallPrev == null) {
+        this._animWallPrev = now;
+        return Math.min(1 / maxFps, this.perf.frameDeltaCap);
+      }
+      const d = Math.min((now - this._animWallPrev) / 1000, this.perf.frameDeltaCap);
+      this._animWallPrev = now;
+      return d;
+    }
+    return Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
+  }
+
+  /** Desktop: warm skin shaders once idle (menu shows sooner). `startGame` also calls this. */
+  _ensureShaderPrewarm() {
+    if (this.isMobile || this._shaderPrewarmDone || !this.enemyManager || !this.renderer) return;
+    this._shaderPrewarmDone = true;
+    try {
+      this.enemyManager.prewarmSkinnedMaterials(this.renderer, this.camera);
+    } catch (e) {
+      console.warn('[KOL BASH] shader prewarm', e);
+    }
+  }
+
+  /** Schedule prewarm after first paint so boot thread/GC can settle. */
+  _queueShaderPrewarmIdle() {
+    if (this.isMobile) return;
+    const idle =
+      typeof window.requestIdleCallback === 'function'
+        ? window.requestIdleCallback.bind(window)
+        : (cb) => setTimeout(() => cb({ didTimeout: true, timeRemaining: () => 0 }), 400);
+    idle(() => this._ensureShaderPrewarm(), { timeout: 5000 });
+  }
+
+  /**
+   * Full level bakes are heavy — wave 1 only needs level 0. Bake other floors in idle time after the menu is up.
+   */
+  _finishArenaPrebakeInBackground() {
+    const a = this.arena;
+    if (!a || a.liveLevelTexturesOnly || a.levelAssetsPrebaked) return;
+    const idle =
+      typeof window.requestIdleCallback === 'function'
+        ? window.requestIdleCallback.bind(window)
+        : (cb) => setTimeout(() => cb({ didTimeout: true, timeRemaining: () => 0 }), 280);
+
+    const run = async () => {
+      try {
+        for (let L = 1; L < LEVELS.length; L++) {
+          if (a.levelAssetsPrebaked) break;
+          if (a._isLevelPrebaked(L)) continue;
+          await a.prebakeLevelTexturesAsync({ onlyLevels: [L] });
+          for (let i = 0; i < 2; i++) await new Promise((r) => requestAnimationFrame(r));
+        }
+      } catch (e) {
+        console.warn('[KOL BASH] background arena bake', e);
+      }
+    };
+
+    idle(() => void run(), { timeout: 8000 });
   }
 
   _showFatalError(message) {
@@ -350,15 +493,16 @@ class Game {
         this.enemyManager.warmPool(warmTarget);
       }
       if (!this.isMobile) {
-        this.ui.updateLoadingProgress('Pre-compiling shaders…');
-        this.enemyManager.prewarmSkinnedMaterials(this.renderer, this.camera);
+        this.ui.updateLoadingProgress('GPU warmup (background)…');
+        this._queueShaderPrewarmIdle();
       }
       this.ui.updateLoadingProgress('Baking arena visuals…');
       if (!this.isMobile) {
-        await this.arena.prebakeLevelTexturesAsync();
+        /** Wave 1 only needs level 0 — other levels bake after the title screen (`_finishArenaPrebakeInBackground`). */
+        await this.arena.prebakeLevelTexturesAsync({ onlyLevels: [0] });
       }
       this.ui.updateLoadingProgress('Starting…');
-      await this.ensureCinematicsForSelection();
+      void this.ensureCinematicsForSelection();
       if (this.isMobile) await new Promise((r) => requestAnimationFrame(r));
     } catch (e) {
       console.warn('Model loading issue:', e);
@@ -381,6 +525,7 @@ class Game {
     );
     // #endregion
     this.ui.showStartScreen();
+    this._finishArenaPrebakeInBackground();
     this._characterSelect?.refreshStartButton();
     this._characterSelect?.relayout();
 
@@ -487,15 +632,22 @@ class Game {
         });
     this.createLighting();
 
-    this.deathScene = new DeathScene({ deferSkinned: this.isMobile });
-    this.dareDancers = new DareBackupDancers({ useWebGlRenderer: !this.isMobile });
+    this.deathScene = new DeathScene({ deferSkinned: this.isMobile, textureBudgetMax: this.perf.modelTextureBudget });
+    this.dareDancers = new DareBackupDancers({
+      useWebGlRenderer: !this.isMobile,
+      textureBudgetMax: this.perf.modelTextureBudget
+    });
     this.specialAttack = new SpecialAttackController(this.scene, {
       maxOrbs: this.perf.specialMaxOrbs ?? (this.isMobile ? 12 : 90),
       lightMode: this.isMobile,
-      lowTierSpecial: this.isLowTierMobile
+      lowTierSpecial: this.isLowTierMobile,
+      textureBudgetMax: this.perf.modelTextureBudget
     });
     this.gameMusic = new GameMusic();
-    this.waveClear = new WaveClearCinematic(this.scene, this.camera, { deferSkinned: this.isMobile });
+    this.waveClear = new WaveClearCinematic(this.scene, this.camera, {
+      deferSkinned: this.isMobile,
+      textureBudgetMax: this.perf.modelTextureBudget
+    });
     this._buildAllyShipTemplate();
   }
 
@@ -684,7 +836,8 @@ class Game {
       /** Never clone skinned FBX during combat on phones — pool + cheap fallback only. */
       preferPoolOnly: this.isMobile,
       /** Halves AnimationMixer CPU on phones (staggered 2× delta when sampled). */
-      mixerHalfRateMobile: this.isMobile
+      mixerHalfRateMobile: this.isMobile,
+      textureBudgetMax: this.perf.modelTextureBudget
     });
     this.enemyManager.onEnemyDeath = (enemy) => this.onEnemyKilled(enemy);
 
@@ -704,7 +857,10 @@ class Game {
     this.waveManager.setPlayerCamera(this.camera);
     this.enemyManager.setWaveManager(this.waveManager);
 
-    this.bossEncounter = new BossEncounter(this.scene, this.enemyManager, { isMobile: this.isMobile });
+    this.bossEncounter = new BossEncounter(this.scene, this.enemyManager, {
+      isMobile: this.isMobile,
+      textureBudgetMax: this.perf.modelTextureBudget
+    });
     this.bossEncounter.onVictory = () => {
       this.gameMusic?.leaveBossFight();
       this.ui.clearBossEncounterHud();
@@ -846,20 +1002,12 @@ class Game {
       done++;
       onProgress?.(done, total);
     };
-    /** Parallel FBX decode spikes memory / main thread on iOS — load one file per frame on mobile. */
-    if (this.isMobile) {
-      for (const path of models) {
-        await this.enemyManager.loadFBX(path).catch(() => {});
-        bump();
-        await new Promise((r) => requestAnimationFrame(r));
-      }
-      return;
+    /** One model per frame — peaks RAM far less than parallel decode (mobile + desktop). */
+    for (const path of models) {
+      await this.enemyManager.loadFBX(path).catch(() => {});
+      bump();
+      await new Promise((r) => requestAnimationFrame(r));
     }
-    await Promise.all(
-      models.map((path) =>
-        this.enemyManager.loadFBX(path).catch(() => {}).finally(bump)
-      )
-    );
   }
 
   setupEventListeners() {
@@ -942,7 +1090,9 @@ class Game {
       }
     });
 
-    this.profilePreview = new CharacterProfilePreview(document.getElementById('char-profile-preview-mount'));
+    this.profilePreview = new CharacterProfilePreview(document.getElementById('char-profile-preview-mount'), {
+      textureBudgetMax: this.perf.modelTextureBudget
+    });
     this._characterSelect = new CharacterSelectController(this);
 
     const jumpBtn = document.getElementById('jump-btn');
@@ -1566,6 +1716,7 @@ class Game {
     const ch = getCharacter(this.selectedCharacterId);
     if (!ch.playable) return;
     if (!this.isCinematicReadyForSelection()) return;
+    this._ensureShaderPrewarm();
     resumeSharedAudioContext();
     this.restartRun();
   }
@@ -2139,9 +2290,11 @@ class Game {
     if (this.isRunning && this.waveClear?.active) {
       requestAnimationFrame(() => this.animate());
       if (skipFrameHidden) return;
+      const nowWc = performance.now();
+      if (this._throttleFpsSkip(nowWc)) return;
       try {
         this._syncMobileAutofireFlag();
-        const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
+        const delta = this._computeSimDelta(nowWc);
         this._mobileDbg?.tickFrame(delta * 1000);
         const playerPos = this.player.getPosition();
         this.physicsWorld.update(delta);
@@ -2179,9 +2332,12 @@ class Game {
 
     if (skipFrameHidden) return;
 
+    const now = performance.now();
+    if (this._throttleFpsSkip(now)) return;
+
     try {
       this._syncMobileAutofireFlag();
-      const delta = Math.min(this.clock.getDelta(), this.perf.frameDeltaCap);
+      const delta = this._computeSimDelta(now);
       this._mobileDbg?.tickFrame(delta * 1000);
       const playerPos = this.player.getPosition();
 
