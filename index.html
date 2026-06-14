@@ -1314,41 +1314,257 @@
     /* ===== VICTORY (campaign complete) ===== */
     #victory-screen {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-      background: rgba(0, 8, 12, 0.96); display: none; flex-direction: column;
-      justify-content: center; align-items: center; z-index: 2100;
-      text-align: center; padding: 1rem;
+      background: rgba(0, 8, 12, 0.97); display: none; flex-direction: column;
+      justify-content: flex-start; align-items: center; z-index: 2100;
+      text-align: center; padding: clamp(0.75rem, 2vh, 1.5rem);
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
     }
     #victory-screen::before {
       content: ''; position: absolute; inset: 0;
-      background: radial-gradient(ellipse at 50% 30%, rgba(0, 255, 200, 0.12) 0%, transparent 55%);
+      background:
+        radial-gradient(ellipse at 50% 18%, rgba(0, 255, 200, 0.14) 0%, transparent 52%),
+        radial-gradient(ellipse at 20% 80%, rgba(255, 0, 180, 0.08) 0%, transparent 45%);
       pointer-events: none;
     }
+    #victory-screen::after {
+      content: ''; position: absolute; inset: 0; pointer-events: none;
+      background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,0,200,0.02) 3px, rgba(255,0,200,0.02) 6px);
+      opacity: 0.45;
+    }
+    .vic-hero { position: relative; z-index: 1; width: min(96vw, 720px); margin-bottom: 1rem; }
     #victory-screen .vic-title {
-      font-family: 'Orbitron', monospace; font-size: 3.2rem; font-weight: 900;
+      font-family: 'Orbitron', monospace; font-size: clamp(2rem, 6vw, 3.2rem); font-weight: 900;
       background: linear-gradient(180deg, #00ffcc, #00aaff 45%, #ff00aa);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
       filter: drop-shadow(0 0 24px rgba(0, 255, 200, 0.45));
-      margin-bottom: 0.35rem; position: relative; z-index: 1;
+      margin-bottom: 0.35rem;
     }
     #victory-screen .vic-sub {
-      font-size: 0.95rem; color: #889; letter-spacing: 0.35em; margin-bottom: 2rem;
-      position: relative; z-index: 1;
+      font-size: 0.82rem; color: #889; letter-spacing: 0.28em; margin-bottom: 1.25rem;
     }
     #victory-screen .vic-stats {
-      display: flex; gap: 1.5rem; margin-bottom: 2.5rem; flex-wrap: wrap; justify-content: center;
-      position: relative; z-index: 1;
+      display: flex; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; justify-content: center;
     }
-    #victory-screen .vic-stat { text-align: center; min-width: 90px; }
-    #victory-screen .vic-stat .label { font-size: 0.65rem; color: #556; margin-bottom: 0.25rem; letter-spacing: 0.12em; }
-    #victory-screen .vic-stat .value { font-family: 'Orbitron', monospace; font-size: 1.35rem; color: #00ffff; }
+    #victory-screen .vic-stat { text-align: center; min-width: 78px; }
+    #victory-screen .vic-stat .label { font-size: 0.6rem; color: #556; margin-bottom: 0.2rem; letter-spacing: 0.12em; }
+    #victory-screen .vic-stat .value { font-family: 'Orbitron', monospace; font-size: 1.15rem; color: #00ffff; }
+    #victory-screen .vic-stat.vic-stat-time .value { color: #ff66cc; font-size: 1.35rem; }
+
+    .vic-callsign-panel {
+      position: relative; z-index: 1; width: min(96vw, 520px);
+      margin: 0 auto 1.25rem; padding: 0.85rem 1rem;
+      border-radius: 14px; border: 1px solid rgba(255, 0, 200, 0.35);
+      background: rgba(8, 4, 18, 0.82);
+      box-shadow: 0 0 40px rgba(255, 0, 160, 0.12);
+    }
+    .vic-callsign-kicker {
+      font-family: 'Orbitron', monospace; font-size: 0.62rem; letter-spacing: 0.32em;
+      color: rgba(255, 200, 255, 0.7); margin-bottom: 0.5rem;
+    }
+    .vic-callsign-row { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; }
+    #vic-username-input {
+      flex: 1 1 180px; min-width: 0; max-width: 280px;
+      font-family: 'Orbitron', monospace; font-size: 0.85rem; letter-spacing: 0.08em;
+      padding: 0.55rem 0.75rem; border-radius: 8px;
+      border: 1px solid rgba(0, 255, 255, 0.35); background: rgba(0, 0, 0, 0.45); color: #e8f8ff;
+    }
+    #vic-username-input.vic-input-error { border-color: #ff4466; animation: vicInputShake 0.35s ease; }
+    @keyframes vicInputShake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-4px); }
+      75% { transform: translateX(4px); }
+    }
+    #vic-username-save {
+      font-family: 'Orbitron', monospace; font-size: 0.72rem; font-weight: 700;
+      padding: 0.55rem 1.1rem; letter-spacing: 0.1em;
+      background: linear-gradient(90deg, #ff00aa, #00ffff); border: none; color: #000;
+      clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%); cursor: pointer;
+    }
+
+    #vic-pack-stage {
+      position: relative; z-index: 1; width: min(96vw, 380px); margin: 0 auto 1.25rem;
+      perspective: 900px;
+    }
+    .vic-pack-label {
+      font-family: 'Orbitron', monospace; font-size: 0.7rem; letter-spacing: 0.28em;
+      color: #ffd700; margin-bottom: 0.65rem;
+      text-shadow: 0 0 16px rgba(255, 215, 0, 0.45);
+    }
+    #vic-pack-card {
+      position: relative; width: min(72vw, 260px); height: min(96vw, 340px);
+      margin: 0 auto; transform-style: preserve-3d;
+      transition: transform 1.05s cubic-bezier(0.22, 1, 0.32, 1);
+    }
+    #vic-pack-card.is-flipped { transform: rotateY(180deg) scale(1.04); }
+    #vic-pack-stage.is-open .vic-pack-burst { opacity: 1; transform: scale(1.35); }
+    .vic-pack-face {
+      position: absolute; inset: 0; backface-visibility: hidden; border-radius: 18px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      border: 2px solid rgba(255, 0, 200, 0.55);
+      box-shadow: 0 0 50px rgba(255, 0, 180, 0.35), inset 0 0 30px rgba(0, 255, 255, 0.08);
+    }
+    .vic-pack-front {
+      background: linear-gradient(145deg, #1a0530 0%, #0a1028 55%, #120818 100%);
+    }
+    .vic-pack-front-emoji { font-size: 3.2rem; margin-bottom: 0.5rem; filter: drop-shadow(0 0 12px rgba(255,0,200,0.6)); }
+    .vic-pack-front-title {
+      font-family: 'Orbitron', monospace; font-size: 1.1rem; font-weight: 900;
+      background: linear-gradient(180deg, #fff6ff, #ff00aa);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .vic-pack-front-sub { font-size: 0.72rem; color: #9ab; letter-spacing: 0.2em; margin-top: 0.35rem; }
+    .vic-pack-back {
+      transform: rotateY(180deg);
+      background: linear-gradient(145deg, #0a2818 0%, #102838 50%, #1a0830 100%);
+      padding: 1rem;
+    }
+    .vic-pack-back-kicker { font-size: 0.65rem; color: #7af0ff; letter-spacing: 0.25em; margin-bottom: 0.5rem; }
+    .vic-pack-back-glyph {
+      font-family: 'Orbitron', monospace; font-size: 2.4rem; font-weight: 900;
+      color: #ffd700; text-shadow: 0 0 24px rgba(255, 215, 0, 0.55);
+    }
+    .vic-pack-burst {
+      position: absolute; left: 50%; top: 50%; width: 120%; height: 120%;
+      transform: translate(-50%, -50%) scale(0.6); opacity: 0; pointer-events: none;
+      background: radial-gradient(circle, rgba(255,0,200,0.35) 0%, transparent 68%);
+      transition: opacity 0.5s ease, transform 0.9s ease;
+    }
+    #vic-pack-open-btn {
+      display: block; margin: 0.85rem auto 0;
+      font-family: 'Orbitron', monospace; font-size: 0.82rem; font-weight: 700;
+      padding: 0.75rem 2rem; letter-spacing: 0.14em;
+      background: linear-gradient(90deg, #ffd700, #ff00aa); border: none; color: #000;
+      clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%); cursor: pointer;
+      box-shadow: 0 0 24px rgba(255, 215, 0, 0.35);
+    }
+    #vic-pack-open-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    #vic-wallet-reveal {
+      display: none; flex-direction: column; align-items: center; gap: 0.65rem;
+      position: relative; z-index: 1; width: min(96vw, 620px); margin: 0 auto 1rem;
+      padding: 1rem; border-radius: 16px;
+      border: 1px solid rgba(0, 255, 200, 0.35);
+      background: rgba(4, 12, 18, 0.88);
+      animation: vicRevealIn 0.65s ease;
+    }
+    @keyframes vicRevealIn {
+      from { opacity: 0; transform: translateY(12px) scale(0.96); }
+      to { opacity: 1; transform: none; }
+    }
+    .vic-wallet-kicker {
+      font-family: 'Orbitron', monospace; font-size: 0.62rem; letter-spacing: 0.3em; color: #00ffcc;
+    }
+    #vic-wallet-label {
+      font-family: 'Orbitron', monospace; font-size: 1rem; color: #ff66cc; letter-spacing: 0.08em;
+    }
+    #vic-wallet-address {
+      font-family: ui-monospace, monospace; font-size: clamp(0.62rem, 2.8vw, 0.78rem);
+      color: #e8f4ff; word-break: break-all; line-height: 1.45;
+      padding: 0.55rem 0.65rem; border-radius: 8px;
+      background: rgba(0, 0, 0, 0.45); border: 1px dashed rgba(0, 255, 255, 0.3);
+      width: 100%;
+    }
+    .vic-wallet-actions { display: flex; gap: 0.65rem; flex-wrap: wrap; justify-content: center; width: 100%; }
+    #vic-wallet-copy, #vic-wallet-save {
+      font-family: 'Orbitron', monospace; font-size: 0.68rem; font-weight: 700;
+      padding: 0.55rem 1rem; letter-spacing: 0.08em; cursor: pointer;
+      clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%);
+    }
+    #vic-wallet-copy {
+      background: linear-gradient(90deg, #00ffaa, #00aaff); border: none; color: #000;
+    }
+    #vic-wallet-save {
+      background: transparent; color: #ffd700; border: 2px solid rgba(255, 215, 0, 0.55);
+    }
+    #vic-wallet-save-status {
+      font-size: 0.72rem; color: #7af0ff; letter-spacing: 0.12em; min-height: 1.1em;
+    }
+
+    #vic-rank-badge {
+      font-family: 'Orbitron', monospace; font-size: 0.75rem; color: #ffd700;
+      letter-spacing: 0.18em; margin-bottom: 0.35rem;
+    }
+    #vic-leaderboard-panel {
+      position: relative; z-index: 1; width: min(96vw, 520px); margin: 0 auto 1rem;
+      text-align: left;
+    }
+    .vic-lb-title {
+      font-family: 'Orbitron', monospace; font-size: 0.68rem; letter-spacing: 0.28em;
+      color: rgba(255, 200, 255, 0.75); margin-bottom: 0.5rem; text-align: center;
+    }
+    #vic-leaderboard-list {
+      list-style: none; margin: 0; padding: 0;
+      border-radius: 12px; overflow: hidden;
+      border: 1px solid rgba(255, 0, 200, 0.25);
+    }
+    #vic-leaderboard-list li {
+      display: grid; grid-template-columns: 2.5rem 1fr auto; gap: 0.5rem; align-items: center;
+      padding: 0.45rem 0.65rem; font-size: 0.82rem;
+      background: rgba(8, 4, 16, 0.65);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    #vic-leaderboard-list li:last-child { border-bottom: none; }
+    .vic-lb-rank { font-family: 'Orbitron', monospace; color: #ffd700; font-size: 0.72rem; }
+    .vic-lb-name { color: #e8e0f8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .vic-lb-time { font-family: 'Orbitron', monospace; color: #00ffff; font-size: 0.72rem; }
+    .vic-lb-empty, .title-lb-empty { text-align: center; color: #667; font-style: italic; display: block; padding: 0.65rem; }
+
     #victory-done {
       font-family: 'Orbitron', monospace; font-size: 1rem; padding: 0.85rem 3rem;
       background: linear-gradient(90deg, #00ffaa, #00aaff); border: none;
       color: #000; cursor: pointer; font-weight: 700; letter-spacing: 0.12em;
       clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%);
-      transition: all 0.2s ease; pointer-events: auto; position: relative; z-index: 1;
+      transition: all 0.2s ease; position: relative; z-index: 1; margin-bottom: 1.5rem;
+      display: none;
     }
     #victory-done:hover { transform: scale(1.05); filter: brightness(1.15); }
+
+    /* Title screen speed hall */
+    .title-speed-hall {
+      position: relative; z-index: 2; width: 100%; max-width: min(96vw, 520px);
+      margin-top: clamp(0.75rem, 2vh, 1.25rem);
+      padding: 0.85rem 1rem 1rem;
+      border-radius: 16px;
+      border: 1px solid rgba(0, 255, 200, 0.22);
+      background: linear-gradient(145deg, rgba(10, 6, 22, 0.92), rgba(4, 8, 16, 0.94));
+      box-shadow: 0 0 40px rgba(0, 255, 200, 0.08);
+    }
+    .title-speed-hall-head { text-align: center; margin-bottom: 0.55rem; }
+    .title-speed-badge {
+      display: block; font-family: 'Orbitron', monospace; font-size: 0.68rem;
+      letter-spacing: 0.32em; color: #00ffcc;
+    }
+    .title-speed-sub { font-size: 0.65rem; color: #667; letter-spacing: 0.2em; }
+    .title-leaderboard-list {
+      list-style: none; margin: 0 0 0.75rem; padding: 0;
+      border-radius: 10px; overflow: hidden; border: 1px solid rgba(255, 0, 200, 0.2);
+    }
+    .title-leaderboard-list li {
+      display: grid; grid-template-columns: 2.2rem 1fr auto; gap: 0.4rem; align-items: center;
+      padding: 0.4rem 0.55rem; font-size: 0.78rem;
+      background: rgba(0, 0, 0, 0.28); border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .title-leaderboard-list li:last-child { border-bottom: none; }
+    .title-lb-rank { font-family: 'Orbitron', monospace; color: #ffd700; font-size: 0.68rem; }
+    .title-lb-name { color: #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .title-lb-time { font-family: 'Orbitron', monospace; color: #00ffff; font-size: 0.68rem; }
+    .title-callsign-row { text-align: center; }
+    .title-callsign-label {
+      display: block; font-family: 'Orbitron', monospace; font-size: 0.58rem;
+      letter-spacing: 0.24em; color: rgba(255,200,255,0.65); margin-bottom: 0.35rem;
+    }
+    .title-callsign-inputs { display: flex; gap: 0.45rem; justify-content: center; flex-wrap: wrap; }
+    .title-username-input {
+      font-family: 'Orbitron', monospace; font-size: 0.78rem; padding: 0.45rem 0.65rem;
+      border-radius: 8px; border: 1px solid rgba(0,255,255,0.3);
+      background: rgba(0,0,0,0.4); color: #e8f8ff; width: min(220px, 60vw);
+    }
+    .title-username-save {
+      font-family: 'Orbitron', monospace; font-size: 0.68rem; font-weight: 700;
+      padding: 0.45rem 0.9rem; letter-spacing: 0.1em;
+      background: linear-gradient(90deg, #ff00aa, #00ffff); border: none; color: #000;
+      clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%); cursor: pointer;
+    }
 
     /* ===== LOADING ===== */
     #loading-screen {
@@ -1672,6 +1888,21 @@
       <div class="start-actions">
         <button type="button" class="start-btn" id="start-game-btn" disabled>LOADING…</button>
       </div>
+
+      <aside class="title-speed-hall" aria-label="Speed run leaderboard">
+        <div class="title-speed-hall-head">
+          <span class="title-speed-badge">SPEED RUN HALL</span>
+          <span class="title-speed-sub">FASTEST TOLY CLEARS</span>
+        </div>
+        <ol id="title-leaderboard-list" class="title-leaderboard-list"></ol>
+        <div class="title-callsign-row">
+          <label class="title-callsign-label" for="title-username-input">YOUR CALLSIGN</label>
+          <div class="title-callsign-inputs">
+            <input id="title-username-input" class="title-username-input" type="text" maxlength="16" placeholder="3–16 chars" autocomplete="username" />
+            <button type="button" id="title-username-save" class="title-username-save">SET</button>
+          </div>
+        </div>
+      </aside>
     </div>
 
     <div class="controls-info">
@@ -1684,7 +1915,7 @@
       <span class="key">E</span> Disco Vortex (11 kills)
       <span class="key">ESC / P</span> Pause
     </div>
-    <p class="music-credit">Music: <a href="https://incompetech.com/music/royalty-free/music.html" target="_blank" rel="noopener">Funkorama</a> by Kevin MacLeod (CC BY 4.0) · Optional local file: <code>/public/audio/disco-floor.mp3</code></p>
+    <p class="music-credit">Music: local disco floor tracks in <code>/public/audio/</code> · toggle with HUD 🎵</p>
   </div>
 
   <div id="game-container"></div>
@@ -1844,14 +2075,60 @@
   </div>
 
   <div id="victory-screen">
-    <div class="vic-title">CHAOS CONQUERED</div>
-    <div class="vic-sub">ALL SIX FLOORS CLEARED — THE DISCO IS YOURS</div>
-    <div class="vic-stats">
-      <div class="vic-stat"><div class="label">Score</div><div class="value" id="vic-score">0</div></div>
-      <div class="vic-stat"><div class="label">Kills</div><div class="value" id="vic-kills">0</div></div>
-      <div class="vic-stat"><div class="label">Damage</div><div class="value" id="vic-damage">0</div></div>
-      <div class="vic-stat"><div class="label">Coins</div><div class="value" id="vic-coins">0</div></div>
+    <div class="vic-hero">
+      <div class="vic-title">CHAOS CONQUERED</div>
+      <div class="vic-sub">TOLY FALLEN — THE DISCO FLOOR IS YOURS</div>
+      <div class="vic-stats">
+        <div class="vic-stat vic-stat-time"><div class="label">Clear Time</div><div class="value" id="vic-run-time">0:00.00</div></div>
+        <div class="vic-stat"><div class="label">Score</div><div class="value" id="vic-score">0</div></div>
+        <div class="vic-stat"><div class="label">Kills</div><div class="value" id="vic-kills">0</div></div>
+        <div class="vic-stat"><div class="label">Damage</div><div class="value" id="vic-damage">0</div></div>
+        <div class="vic-stat"><div class="label">Coins</div><div class="value" id="vic-coins">0</div></div>
+      </div>
     </div>
+
+    <div class="vic-callsign-panel">
+      <div class="vic-callsign-kicker">REGISTER FOR SPEED RUN HALL</div>
+      <div class="vic-callsign-row">
+        <input id="vic-username-input" type="text" maxlength="16" placeholder="CALLSIGN (3–16)" autocomplete="username" />
+        <button type="button" id="vic-username-save">LOCK IN</button>
+      </div>
+    </div>
+
+    <div id="vic-pack-stage">
+      <div class="vic-pack-label">KOL TRENCH DROP — RIP THE PACK</div>
+      <div class="vic-pack-burst" aria-hidden="true"></div>
+      <div id="vic-pack-card">
+        <div class="vic-pack-face vic-pack-front">
+          <div class="vic-pack-front-emoji" aria-hidden="true">💿</div>
+          <div class="vic-pack-front-title">KOL BASH</div>
+          <div class="vic-pack-front-sub">CLASSIFIED WALLET</div>
+        </div>
+        <div class="vic-pack-face vic-pack-back">
+          <div class="vic-pack-back-kicker">UNSEALED</div>
+          <div class="vic-pack-back-glyph">KOL</div>
+        </div>
+      </div>
+      <button type="button" id="vic-pack-open-btn">RIP PACK</button>
+    </div>
+
+    <div id="vic-wallet-reveal">
+      <div class="vic-wallet-kicker">OPERATIVE WALLET UNLOCKED</div>
+      <div id="vic-wallet-label">—</div>
+      <div id="vic-wallet-address">—</div>
+      <div class="vic-wallet-actions">
+        <button type="button" id="vic-wallet-copy">COPY ADDRESS</button>
+        <button type="button" id="vic-wallet-save">SAVE TO VAULT</button>
+      </div>
+      <div id="vic-wallet-save-status"></div>
+    </div>
+
+    <div id="vic-leaderboard-panel">
+      <div id="vic-rank-badge"></div>
+      <div class="vic-lb-title">SPEED RUN HALL — TOP CLEARS</div>
+      <ol id="vic-leaderboard-list"></ol>
+    </div>
+
     <button type="button" id="victory-done">BACK TO TITLE</button>
   </div>
 

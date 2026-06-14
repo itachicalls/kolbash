@@ -371,7 +371,7 @@ export class WaveManager {
     }
 
     if (this.isWaveActive && this.spawnQueue.length === 0) {
-      if (this.enemyManager.getAliveCount() === 0) {
+      if (this.enemyManager.getWaveAliveCount() === 0) {
         const visualsClear = this.enemyManager.isWaveClearForCinematic();
         const playerShotsDone =
           !this._hasActivePlayerProjectiles || !this._hasActivePlayerProjectiles();

@@ -1,6 +1,6 @@
 /**
- * Secret boss: shoot the disco clock tower → shielded adds phase + vulnerable windows
- * + toxic artillery. On death, the run can hand off to the finale Toly boss.
+ * Optional easter egg: shoot the disco clock tower (several hits, wave 2+) for a side fight.
+ * Does not block waves, finale, or victory rewards — campaign continues normally.
  */
 
 import * as THREE from 'three';
@@ -12,12 +12,19 @@ const PHASE = {
   DEAD: 'dead'
 };
 
+/** Tower must be struck this many times (within the hit window) before the encounter arms. */
+const TOWER_HITS_TO_ARM = 7;
+/** Hits decay if the player stops shooting the tower for this long. */
+const TOWER_HIT_WINDOW_MS = 14000;
+/** Easter egg only after wave 1 is cleared — never hijacks the opening wave. */
+const MIN_WAVE_TO_ARM = 2;
+
 export class ClockTowerEasterEgg {
   /**
    * @param {THREE.Scene} scene
    * @param {import('./enemy.js').EnemyManager} enemyManager
    * @param {import('./arena.js').Arena} arena
-   * @param {{ isMobile?: boolean; getWaveManager?: () => import('./waves.js').WaveManager | null; onUiUpdate?: (p: object) => void; onDefeated?: () => void | Promise<void> }} opts
+   * @param {{ isMobile?: boolean; getWaveManager?: () => import('./waves.js').WaveManager | null; getCurrentWave?: () => number; onArmProgress?: (hits: number, required: number) => void; onUiUpdate?: (p: object) => void; onDefeated?: () => void | Promise<void> }} opts
    */
   constructor(scene, enemyManager, arena, opts = {}) {
     this.scene = scene;
@@ -25,6 +32,8 @@ export class ClockTowerEasterEgg {
     this.arena = arena;
     this.isMobile = opts.isMobile === true;
     this._getWaveManager = typeof opts.getWaveManager === 'function' ? opts.getWaveManager : () => null;
+    this._getCurrentWave = typeof opts.getCurrentWave === 'function' ? opts.getCurrentWave : () => 0;
+    this.onArmProgress = typeof opts.onArmProgress === 'function' ? opts.onArmProgress : null;
     this.onUiUpdate = typeof opts.onUiUpdate === 'function' ? opts.onUiUpdate : null;
     this.onDefeated = typeof opts.onDefeated === 'function' ? opts.onDefeated : null;
 
@@ -63,6 +72,11 @@ export class ClockTowerEasterEgg {
     this._addsPhaseStartedAt = 0;
     /** @type {((damage: number) => void) | null} */
     this._onPlayerHit = null;
+
+    this._towerHitCount = 0;
+    this._lastTowerHitAt = 0;
+    this._minWaveToArm = MIN_WAVE_TO_ARM;
+    this._hitsRequired = TOWER_HITS_TO_ARM;
   }
 
   isActive() {
@@ -78,6 +92,8 @@ export class ClockTowerEasterEgg {
     this.phase = PHASE.IDLE;
     this.roundIndex = 0;
     this.hp = this.maxHp;
+    this._towerHitCount = 0;
+    this._lastTowerHitAt = 0;
     this._clearProjectiles();
     this._clearPools();
     this._closingVulnerable = false;
@@ -119,11 +135,13 @@ export class ClockTowerEasterEgg {
   }
 
   /**
-   * First bullet that strikes tower geometry arms the encounter.
+   * Strikes on tower geometry count toward arming — requires several deliberate hits after wave 1.
    * @returns {boolean} true if this shot triggered the start
    */
   tryActivateFromShot(origin, direction) {
     if (this.phase !== PHASE.IDLE) return false;
+    if (this._getCurrentWave() < this._minWaveToArm) return false;
+
     const meshes = this.arena.clockTowerRaycastMeshes;
     if (!meshes?.length) return false;
     const dir = direction.clone();
@@ -134,6 +152,22 @@ export class ClockTowerEasterEgg {
     const hits = this._raycaster.intersectObjects(meshes, false);
     if (!hits.length) return false;
     if (hits[0].distance > 240) return false;
+
+    const now = performance.now();
+    if (this._lastTowerHitAt && now - this._lastTowerHitAt > TOWER_HIT_WINDOW_MS) {
+      this._towerHitCount = 0;
+    }
+    this._lastTowerHitAt = now;
+    this._towerHitCount++;
+
+    if (this.onArmProgress) {
+      this.onArmProgress(this._towerHitCount, this._hitsRequired);
+    }
+
+    if (this._towerHitCount < this._hitsRequired) return false;
+
+    this._towerHitCount = 0;
+    this._lastTowerHitAt = 0;
     this._armEncounter();
     return true;
   }
@@ -147,13 +181,6 @@ export class ClockTowerEasterEgg {
     this._vulnerableEndsAt = 0;
     this._closingVulnerable = false;
 
-    this.enemyManager.clear();
-    const wm = this._getWaveManager();
-    if (wm) {
-      wm.spawnQueue = [];
-      wm.isWaveActive = false;
-    }
-
     this._addsPhaseStartedAt = performance.now();
     this._spawnAddsBurst();
 
@@ -164,6 +191,39 @@ export class ClockTowerEasterEgg {
         hpPct: 1,
         windowSec: 0
       });
+    }
+  }
+
+  /** Wave ended or player bailed — tear down egg adds/VFX without touching campaign wave state. */
+  suspendForWaveTransition() {
+    if (this.phase === PHASE.IDLE || this.phase === PHASE.DEAD) return;
+    this._clearProjectiles();
+    this._clearPools();
+    this.enemyManager.clearClockTowerAdds?.();
+    this.phase = PHASE.IDLE;
+    this.roundIndex = 0;
+    this.hp = this.maxHp;
+    this._towerHitCount = 0;
+    this._lastTowerHitAt = 0;
+    this._closingVulnerable = false;
+    if (this.onUiUpdate) {
+      this.onUiUpdate({
+        bossKind: 'clock',
+        phase: 'idle',
+        hpPct: 1,
+        windowSec: 0
+      });
+    }
+  }
+
+  _clearClockAddsOnly() {
+    if (typeof this.enemyManager.clearClockTowerAdds === 'function') {
+      this.enemyManager.clearClockTowerAdds();
+      return;
+    }
+    for (let i = this.enemyManager.enemies.length - 1; i >= 0; i--) {
+      const e = this.enemyManager.enemies[i];
+      if (e.userData.isClockTowerAdd) this.enemyManager.removeEnemy(e);
     }
   }
 
@@ -449,7 +509,7 @@ export class ClockTowerEasterEgg {
     if (this.phase === PHASE.DEAD) return;
     this.phase = PHASE.DEAD;
     this._clearProjectiles();
-    this.enemyManager.clear();
+    this._clearClockAddsOnly();
     this._clearPools();
 
     if (this.onUiUpdate) {

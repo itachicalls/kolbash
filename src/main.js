@@ -24,6 +24,16 @@ import { attachMobileDebug } from './mobile-debug.js';
 import { CharacterSelectController } from './character-select.js';
 import { CharacterProfilePreview } from './character-profile-preview.js';
 import { firstPlayableCharacterId, getCharacter, getFinaleBossIntroClip } from './characters.js';
+import {
+  copyTextToClipboard,
+  formatRunTime,
+  getLeaderboardEntries,
+  getUsername,
+  rollWalletReward,
+  saveWalletToVault,
+  setUsername,
+  submitLeaderboardRun
+} from './player-progress.js';
 
 // #region agent log
 /** Off by default — agent logging does two fetch() + sessionStorage per event (bad on mobile WebKit). Enable with ?agentdebug=1 or localStorage kolbash_debug_agent=1 */
@@ -204,6 +214,9 @@ class Game {
 
     /** Desktop shader compile — may run in idle; startGame calls `_ensureShaderPrewarm` before play. */
     this._shaderPrewarmDone = false;
+
+    /** Monotonic clock for speed-run leaderboard (set in `restartRun`). */
+    this._runStartedAt = 0;
   }
 
   isCinematicReadyForSelection() {
@@ -572,6 +585,7 @@ class Game {
     );
     // #endregion
     this.ui.showStartScreen();
+    this.ui.renderTitleLeaderboard?.();
     this._finishArenaPrebakeInBackground();
     this._characterSelect?.refreshStartButton();
     this._characterSelect?.relayout();
@@ -921,6 +935,12 @@ class Game {
     this.clockTowerEgg = new ClockTowerEasterEgg(this.scene, this.enemyManager, this.arena, {
       isMobile: this.isMobile,
       getWaveManager: () => this.waveManager,
+      getCurrentWave: () => this.waveManager?.currentWave ?? 0,
+      onArmProgress: (hits, required) => {
+        if (hits >= 2) {
+          this.ui.showLevelEffect(`CLOCK TOWER RESONATING ${hits}/${required}`);
+        }
+      },
       onUiUpdate: (payload) => this.ui.setBossEncounterHud(payload),
       onDefeated: () => this._onClockTowerEggDefeated()
     });
@@ -954,6 +974,8 @@ class Game {
     };
 
     this.waveManager.onWaveComplete = (wave) => {
+      this.clockTowerEgg?.suspendForWaveTransition?.();
+      this.ui.clearBossEncounterHud();
       this.score += wave * 100;
       this.ui.updateScore(this.score);
       if (this.isMobile) {
@@ -1054,7 +1076,7 @@ class Game {
 
   async preloadModels(onProgress) {
     /** Boss FBX are huge — loaded when the finale starts (`BossEncounter.begin`), not here. */
-    const models = [
+    const allModels = [
       '/models/alon_dancing.fbx',
       '/models/slingoor_dance.fbx',
       '/models/pow_dive.fbx',
@@ -1062,15 +1084,36 @@ class Game {
       '/models/marcell_dancing.fbx',
       '/models/thriller_part3.fbx'
     ];
+    const models =
+      this.isMobile && this.isLowTierMobile
+        ? allModels.filter((p) => !p.includes('thriller') && !p.includes('jump_attack'))
+        : allModels;
+
     let done = 0;
     const total = models.length;
     const bump = () => {
       done++;
       onProgress?.(done, total);
     };
+
+    const loadWithRetry = async (path) => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await this.enemyManager.loadFBX(path);
+          return;
+        } catch (e) {
+          if (attempt === 0) {
+            await new Promise((r) => setTimeout(r, 420));
+          } else {
+            console.warn('[KOL BASH] model load failed:', path, e);
+          }
+        }
+      }
+    };
+
     /** One model per frame — peaks RAM far less than parallel decode (mobile + desktop). */
     for (const path of models) {
-      await this.enemyManager.loadFBX(path).catch(() => {});
+      await loadWithRetry(path);
       bump();
       await new Promise((r) => requestAnimationFrame(r));
     }
@@ -1279,12 +1322,30 @@ class Game {
     this.score += 5000;
     this.ui.updateScore(this.score);
 
-    this.ui.showVictory({
-      score: this.score,
-      kills: this.kills,
-      damageDealt: this.damageDealt,
-      coins: this.coins
-    }, () => this.returnToTitle());
+    const runTimeMs = this._runStartedAt > 0 ? performance.now() - this._runStartedAt : 0;
+    const wallet = rollWalletReward();
+
+    this.ui.showVictoryCompletion(
+      {
+        score: this.score,
+        kills: this.kills,
+        damageDealt: this.damageDealt,
+        coins: this.coins,
+        runTimeMs,
+        characterId: this.selectedCharacterId,
+        wallet
+      },
+      {
+        onDone: () => this.returnToTitle(),
+        formatRunTime,
+        getUsername,
+        setUsername,
+        submitLeaderboardRun,
+        getLeaderboardEntries,
+        saveWalletToVault,
+        copyTextToClipboard
+      }
+    );
   }
 
   returnToTitle(opts = {}) {
@@ -1306,6 +1367,7 @@ class Game {
     }
     this.ui.showStartScreen();
     void this.ensureCinematicsForSelection();
+    this.ui.renderTitleLeaderboard?.();
     this._characterSelect?.refreshStartButton();
     this._characterSelect?.relayout();
     if (opts.focusCarousel) {
@@ -1530,6 +1592,8 @@ class Game {
     this.ui.updateWeaponName('DISCO BLASTER');
     this._syncMobileAutofireBtn?.();
 
+    this._runStartedAt = performance.now();
+
     if (this.isMobile) {
       this.player.controls.lock();
       document.getElementById('mobile-controls')?.style.setProperty('display', 'block');
@@ -1551,15 +1615,16 @@ class Game {
     void this.runWaveCountdownThenStartWave();
   }
 
-  /** Clock tower easter egg defeated → rubble, then same pipeline as post–wave-12 dare into the Toly finale. */
+  /** Optional easter egg cleared — bonus score only; finale + prizes still require beating Toly normally. */
   async _onClockTowerEggDefeated() {
     this.ui.clearBossEncounterHud();
     this.arena.ruinClockTower();
-    this.ui.showLevelEffect('THE CLOCK TOWER FALLS…');
-    await new Promise((r) => setTimeout(r, 2200));
-    this._waveCountdownSerial = (this._waveCountdownSerial || 0) + 1;
-    this._pendingBossAfterDare = true;
-    void this.runWaveCountdownThenStartWave();
+    this.score += 1500;
+    this.ui.updateScore(this.score);
+    this.ui.showLevelEffect('OPTIONAL SECRET CLEARED +1500');
+    await new Promise((r) => setTimeout(r, 1800));
+    this.ui.clearBossEncounterHud();
+    this.ui.updateWave(this.waveManager.currentWave);
   }
 
   async runWaveCountdownThenStartWave() {
@@ -1861,7 +1926,10 @@ class Game {
     const muzzlePos = this.weapon.getMuzzleWorldPosition();
 
     if (!this.bossEncounter?.isActive()) {
-      this.clockTowerEgg?.tryActivateFromShot(muzzlePos, dir);
+      const wave = this.waveManager?.currentWave ?? 0;
+      if (wave >= 2) {
+        this.clockTowerEgg?.tryActivateFromShot(muzzlePos, dir);
+      }
     }
 
     let closestEnemy = null;

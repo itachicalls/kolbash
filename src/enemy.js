@@ -913,9 +913,29 @@ export class EnemyManager {
     return count;
   }
 
-  /** True when no enemy meshes (incl. death animation) and no enemy shots remain. */
+  /** Wave completion ignores optional clock-tower ravers. */
+  getWaveAliveCount() {
+    let count = 0;
+    for (let i = 0; i < this.enemies.length; i++) {
+      const e = this.enemies[i];
+      if (e.userData.isDead || e.userData.isClockTowerAdd) continue;
+      count++;
+    }
+    return count;
+  }
+
+  clearClockTowerAdds() {
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const e = this.enemies[i];
+      if (e.userData.isClockTowerAdd) this.removeEnemy(e);
+    }
+  }
+
+  /** True when no campaign enemy meshes (incl. death animation) and no enemy shots remain. */
   isWaveClearForCinematic() {
-    if (this.enemies.length > 0) return false;
+    for (let i = 0; i < this.enemies.length; i++) {
+      if (!this.enemies[i].userData.isClockTowerAdd) return false;
+    }
     if (this.enemyProjectiles.length > 0) return false;
     return true;
   }

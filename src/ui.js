@@ -6,6 +6,12 @@ import { TOTAL_WAVES, REGULAR_WAVES, BOSS_TRIGGER_AFTER_WAVE } from './waves.js'
 import { SPECIAL_CHARGE_KILLS } from './special-attack.js';
 import { resumeSharedAudioContext } from './shared-audio.js';
 import { getFinaleBossIntroClip, DEFAULT_CHARACTER_ID } from './characters.js';
+import {
+  formatRunTime,
+  getLeaderboardEntries,
+  getUsername,
+  setUsername
+} from './player-progress.js';
 
 export const STORE_ITEMS = [
   { id: 'gatling', name: 'GATLING GUN', cost: 200, type: 'weapon', desc: 'Rapid bullet storm' },
@@ -131,7 +137,26 @@ export class UIManager {
       vicKills: document.getElementById('vic-kills'),
       vicDamage: document.getElementById('vic-damage'),
       vicCoins: document.getElementById('vic-coins'),
+      vicRunTime: document.getElementById('vic-run-time'),
+      vicUsernameInput: document.getElementById('vic-username-input'),
+      vicUsernameSave: document.getElementById('vic-username-save'),
+      vicPackStage: document.getElementById('vic-pack-stage'),
+      vicPackCard: document.getElementById('vic-pack-card'),
+      vicPackOpenBtn: document.getElementById('vic-pack-open-btn'),
+      vicWalletReveal: document.getElementById('vic-wallet-reveal'),
+      vicWalletAddress: document.getElementById('vic-wallet-address'),
+      vicWalletLabel: document.getElementById('vic-wallet-label'),
+      vicWalletCopy: document.getElementById('vic-wallet-copy'),
+      vicWalletSave: document.getElementById('vic-wallet-save'),
+      vicWalletSaveStatus: document.getElementById('vic-wallet-save-status'),
+      vicLeaderboardPanel: document.getElementById('vic-leaderboard-panel'),
+      vicLeaderboardList: document.getElementById('vic-leaderboard-list'),
+      vicRankBadge: document.getElementById('vic-rank-badge'),
       victoryDone: document.getElementById('victory-done'),
+
+      titleLeaderboardList: document.getElementById('title-leaderboard-list'),
+      titleUsernameInput: document.getElementById('title-username-input'),
+      titleUsernameSave: document.getElementById('title-username-save'),
 
       specialChargeFill: document.getElementById('special-charge-fill'),
       specialVortexOrb: document.getElementById('special-vortex-orb'),
@@ -169,29 +194,229 @@ export class UIManager {
   }
 
   showVictory(stats, onDone) {
-    if (this.elements.victoryScreen) {
-      if (this.elements.hudTouchLayer) this.elements.hudTouchLayer.style.display = 'none';
-      if (this.elements.hud) this.elements.hud.style.display = 'none';
-      if (this.elements.dareScreen) this.elements.dareScreen.style.display = 'none';
-      if (this.elements.storeScreen) this.elements.storeScreen.style.display = 'none';
-      if (this.elements.gameOver) this.elements.gameOver.style.display = 'none';
-      if (this.elements.startScreen) this.elements.startScreen.style.display = 'none';
-      if (this.elements.loadingScreen) this.elements.loadingScreen.style.display = 'none';
+    this.showVictoryCompletion(stats, { onDone });
+  }
 
-      if (this.elements.vicScore) this.elements.vicScore.textContent = (stats.score ?? 0).toLocaleString();
-      if (this.elements.vicKills) this.elements.vicKills.textContent = (stats.kills ?? 0).toLocaleString();
-      if (this.elements.vicDamage) this.elements.vicDamage.textContent = (stats.damageDealt ?? 0).toLocaleString();
-      if (this.elements.vicCoins) this.elements.vicCoins.textContent = (stats.coins ?? 0).toLocaleString();
+  /**
+   * Campaign clear: stats → callsign → disco pack rip → wallet reveal → speed leaderboard.
+   * @param {object} stats
+   * @param {object} api
+   */
+  showVictoryCompletion(stats, api = {}) {
+    const screen = this.elements.victoryScreen;
+    if (!screen) return;
 
-      this.elements.victoryScreen.style.display = 'flex';
+    if (this.elements.hudTouchLayer) this.elements.hudTouchLayer.style.display = 'none';
+    if (this.elements.hud) this.elements.hud.style.display = 'none';
+    if (this.elements.dareScreen) this.elements.dareScreen.style.display = 'none';
+    if (this.elements.storeScreen) this.elements.storeScreen.style.display = 'none';
+    if (this.elements.gameOver) this.elements.gameOver.style.display = 'none';
+    if (this.elements.startScreen) this.elements.startScreen.style.display = 'none';
+    if (this.elements.loadingScreen) this.elements.loadingScreen.style.display = 'none';
 
-      const btn = this.elements.victoryDone;
-      if (btn) {
-        const clone = btn.cloneNode(true);
-        btn.replaceWith(clone);
-        this.elements.victoryDone = document.getElementById('victory-done');
-        bindPrimaryPointerUpOnce(this.elements.victoryDone, () => onDone?.());
+    if (this.elements.vicScore) this.elements.vicScore.textContent = (stats.score ?? 0).toLocaleString();
+    if (this.elements.vicKills) this.elements.vicKills.textContent = (stats.kills ?? 0).toLocaleString();
+    if (this.elements.vicDamage) this.elements.vicDamage.textContent = (stats.damageDealt ?? 0).toLocaleString();
+    if (this.elements.vicCoins) this.elements.vicCoins.textContent = (stats.coins ?? 0).toLocaleString();
+    if (this.elements.vicRunTime) {
+      const fmt = api.formatRunTime || ((ms) => String(ms));
+      this.elements.vicRunTime.textContent = fmt(stats.runTimeMs ?? 0);
+    }
+
+    const existingUser = api.getUsername?.() || '';
+    if (this.elements.vicUsernameInput) {
+      this.elements.vicUsernameInput.value = existingUser;
+      this.elements.vicUsernameInput.closest('.vic-callsign-panel')?.classList.toggle('has-callsign', !!existingUser);
+    }
+
+    if (this.elements.vicPackStage) {
+      this.elements.vicPackStage.classList.remove('is-open', 'is-revealed');
+    }
+    if (this.elements.vicPackCard) this.elements.vicPackCard.classList.remove('is-flipped');
+    if (this.elements.vicWalletReveal) this.elements.vicWalletReveal.style.display = 'none';
+    if (this.elements.vicLeaderboardPanel) this.elements.vicLeaderboardPanel.style.display = 'none';
+    if (this.elements.vicRankBadge) this.elements.vicRankBadge.textContent = '';
+    if (this.elements.vicWalletSaveStatus) this.elements.vicWalletSaveStatus.textContent = '';
+    if (this.elements.victoryDone) this.elements.victoryDone.style.display = 'none';
+
+    screen.style.display = 'flex';
+    screen.setAttribute('data-phase', 'stats');
+
+    const wallet = stats.wallet || null;
+    let leaderboardResult = null;
+
+    const renderLb = (entries) => {
+      const list = this.elements.vicLeaderboardList;
+      if (!list) return;
+      list.replaceChildren();
+      const rows = entries || api.getLeaderboardEntries?.(8) || [];
+      if (!rows.length) {
+        const li = document.createElement('li');
+        li.className = 'vic-lb-empty';
+        li.textContent = 'BE THE FIRST ON THE FLOOR';
+        list.appendChild(li);
+        return;
       }
+      rows.forEach((row, i) => {
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <span class="vic-lb-rank">#${i + 1}</span>
+          <span class="vic-lb-name">${row.username}</span>
+          <span class="vic-lb-time">${api.formatRunTime ? api.formatRunTime(row.timeMs) : row.timeMs}</span>
+        `;
+        list.appendChild(li);
+      });
+    };
+
+    const revealWallet = () => {
+      if (!wallet) return;
+      if (this.elements.vicWalletReveal) this.elements.vicWalletReveal.style.display = 'flex';
+      if (this.elements.vicWalletAddress) this.elements.vicWalletAddress.textContent = wallet.address;
+      if (this.elements.vicWalletLabel) this.elements.vicWalletLabel.textContent = wallet.label || 'KOL OPERATIVE';
+      if (this.elements.vicLeaderboardPanel) this.elements.vicLeaderboardPanel.style.display = 'block';
+      renderLb(api.getLeaderboardEntries?.(8));
+      if (this.elements.vicRankBadge && leaderboardResult?.rank) {
+        this.elements.vicRankBadge.textContent = `YOUR RANK #${leaderboardResult.rank}`;
+      }
+      if (this.elements.victoryDone) this.elements.victoryDone.style.display = 'inline-block';
+      screen.setAttribute('data-phase', 'complete');
+    };
+
+    const openPack = () => {
+      if (this.elements.vicPackStage) this.elements.vicPackStage.classList.add('is-open');
+      if (this.elements.vicPackCard) {
+        this.elements.vicPackCard.classList.add('is-flipped');
+      }
+      if (this.elements.vicPackOpenBtn) this.elements.vicPackOpenBtn.disabled = true;
+      setTimeout(revealWallet, 1100);
+    };
+
+    const submitRun = () => {
+      let name = api.getUsername?.();
+      if (!name && this.elements.vicUsernameInput?.value) {
+        if (api.setUsername?.(this.elements.vicUsernameInput.value)) {
+          name = api.getUsername?.();
+        }
+      }
+      if (!name) return null;
+      return api.submitLeaderboardRun?.({
+        username: name,
+        timeMs: stats.runTimeMs,
+        score: stats.score,
+        characterId: stats.characterId
+      });
+    };
+
+    if (this.elements.vicUsernameSave) {
+      const btn = this.elements.vicUsernameSave.cloneNode(true);
+      this.elements.vicUsernameSave.replaceWith(btn);
+      this.elements.vicUsernameSave = document.getElementById('vic-username-save');
+      bindPrimaryPointerUpOnce(this.elements.vicUsernameSave, () => {
+        const ok = api.setUsername?.(this.elements.vicUsernameInput?.value);
+        if (ok) {
+          this.elements.vicUsernameInput?.closest('.vic-callsign-panel')?.classList.add('has-callsign');
+          leaderboardResult = submitRun();
+        }
+      });
+    }
+
+    if (this.elements.vicPackOpenBtn) {
+      const btn = this.elements.vicPackOpenBtn.cloneNode(true);
+      this.elements.vicPackOpenBtn.replaceWith(btn);
+      this.elements.vicPackOpenBtn = document.getElementById('vic-pack-open-btn');
+      bindPrimaryPointerUpOnce(this.elements.vicPackOpenBtn, () => {
+        if (!api.getUsername?.()) {
+          const ok = api.setUsername?.(this.elements.vicUsernameInput?.value);
+          if (!ok) {
+            this.elements.vicUsernameInput?.focus?.();
+            this.elements.vicUsernameInput?.classList.add('vic-input-error');
+            setTimeout(() => this.elements.vicUsernameInput?.classList.remove('vic-input-error'), 900);
+            return;
+          }
+        }
+        leaderboardResult = submitRun();
+        openPack();
+      });
+    }
+
+    if (this.elements.vicWalletCopy) {
+      const btn = this.elements.vicWalletCopy.cloneNode(true);
+      this.elements.vicWalletCopy.replaceWith(btn);
+      this.elements.vicWalletCopy = document.getElementById('vic-wallet-copy');
+      bindPrimaryPointerUpOnce(this.elements.vicWalletCopy, async () => {
+        const ok = await api.copyTextToClipboard?.(wallet?.address);
+        if (this.elements.vicWalletSaveStatus) {
+          this.elements.vicWalletSaveStatus.textContent = ok ? 'COPIED TO CLIPBOARD' : 'COPY FAILED — SELECT MANUALLY';
+        }
+      });
+    }
+
+    if (this.elements.vicWalletSave) {
+      const btn = this.elements.vicWalletSave.cloneNode(true);
+      this.elements.vicWalletSave.replaceWith(btn);
+      this.elements.vicWalletSave = document.getElementById('vic-wallet-save');
+      bindPrimaryPointerUpOnce(this.elements.vicWalletSave, () => {
+        const ok = api.saveWalletToVault?.({
+          address: wallet?.address,
+          label: wallet?.label,
+          runTimeMs: stats.runTimeMs,
+          score: stats.score
+        });
+        if (this.elements.vicWalletSaveStatus) {
+          this.elements.vicWalletSaveStatus.textContent = ok ? 'LOCKED IN YOUR VAULT' : 'VAULT SAVE FAILED';
+        }
+      });
+    }
+
+    if (this.elements.victoryDone) {
+      const btn = this.elements.victoryDone.cloneNode(true);
+      this.elements.victoryDone.replaceWith(btn);
+      this.elements.victoryDone = document.getElementById('victory-done');
+      bindPrimaryPointerUpOnce(this.elements.victoryDone, () => api.onDone?.());
+    }
+
+    if (existingUser) {
+      leaderboardResult = submitRun();
+    }
+  }
+
+  renderTitleLeaderboard() {
+    const list = this.elements.titleLeaderboardList;
+    if (!list) return;
+
+    const rows = getLeaderboardEntries(5);
+    list.replaceChildren();
+
+    if (!rows.length) {
+      const li = document.createElement('li');
+      li.className = 'title-lb-empty';
+      li.textContent = 'NO CLEARS YET — CLAIM THE DISCO';
+      list.appendChild(li);
+    } else {
+      rows.forEach((row, i) => {
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <span class="title-lb-rank">#${i + 1}</span>
+          <span class="title-lb-name">${row.username}</span>
+          <span class="title-lb-time">${formatRunTime(row.timeMs)}</span>
+        `;
+        list.appendChild(li);
+      });
+    }
+
+    const input = this.elements.titleUsernameInput;
+    const saveBtn = this.elements.titleUsernameSave;
+    if (input) input.value = getUsername() || '';
+
+    if (saveBtn && !saveBtn.dataset.wired) {
+      saveBtn.dataset.wired = '1';
+      saveBtn.addEventListener('pointerup', (e) => {
+        if (e.button > 0) return;
+        e.preventDefault();
+        if (setUsername(input?.value)) {
+          this.renderTitleLeaderboard();
+        }
+      });
     }
   }
 
@@ -628,6 +853,10 @@ export class UIManager {
   setBossEncounterHud(payload) {
     const wrap = this.elements.bossEncounterHud;
     if (!wrap) return;
+    if (payload.bossKind === 'clock' && payload.phase === 'idle') {
+      wrap.style.display = 'none';
+      return;
+    }
     wrap.style.display = 'flex';
     const title = this.elements.bossEncounterTitle;
     const sub = this.elements.bossEncounterSub;
@@ -646,14 +875,16 @@ export class UIManager {
     }
     if (sub) {
       if (payload.bossKind === 'clock') {
-        if (payload.phase === 'vulnerable' && payload.windowSec > 0) {
-          sub.textContent = `Damage window · ${payload.windowSec.toFixed(1)}s`;
-        } else if (payload.phase === 'adds') {
-          sub.textContent = 'Shielded — clear ravers · dodge toxic barrage';
-        } else if (payload.phase === 'dead') {
-          sub.textContent = 'Something moves beyond the wall…';
-        } else {
+        if (payload.phase === 'idle') {
           sub.textContent = '';
+        } else if (payload.phase === 'vulnerable' && payload.windowSec > 0) {
+          sub.textContent = `Optional · damage window · ${payload.windowSec.toFixed(1)}s`;
+        } else if (payload.phase === 'adds') {
+          sub.textContent = 'Optional secret — clear ravers or ignore and finish your wave';
+        } else if (payload.phase === 'dead') {
+          sub.textContent = 'Secret cleared — keep grinding waves for Toly';
+        } else {
+          sub.textContent = 'Optional easter egg — not required to win';
         }
       } else if (payload.phase === 'vulnerable' && payload.windowSec > 0) {
         sub.textContent = `Damage window · ${payload.windowSec.toFixed(1)}s`;
