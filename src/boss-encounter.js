@@ -276,7 +276,7 @@ export class BossEncounter {
     this.enemyManager.shootersThisWave = 0;
     this.phase = PHASE.INTRO;
     this.roundIndex = 0;
-    this.maxHp = this.isMobile ? 5200 : 9200;
+    this.maxHp = this.isMobile ? 4000 : 6800;
     this.hp = this.maxHp;
     this._introEndsAt = performance.now() + 2200;
     this._pulseT = 0;
@@ -748,7 +748,7 @@ export class BossEncounter {
 
   _openVulnerabilityWindow() {
     this.phase = PHASE.VULNERABLE;
-    this._windowDurationMs = 5000 + Math.random() * 3000;
+    this._windowDurationMs = 6500 + Math.random() * 2500;
     this._vulnerableEndsAt = performance.now() + this._windowDurationMs;
     this._setShieldedLook(false);
     this._fadeToExposeOrIdleVulnerable();

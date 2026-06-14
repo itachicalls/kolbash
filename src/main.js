@@ -2272,7 +2272,7 @@ class Game {
       const dist = Math.sqrt((ex - px) ** 2 + (ez - pz) ** 2);
       if (dist < 2.0) {
         const lastAttack = enemy.userData.lastAttackTime || 0;
-        if (now - lastAttack > 800) {
+        if (now - lastAttack > (type.isJumpAttack ? 1300 : 800)) {
           const type = enemy.userData.type;
           const base = type.diveDamage ?? type.jumpDamage ?? type.damage;
           const damage = Math.round(

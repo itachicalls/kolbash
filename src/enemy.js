@@ -23,7 +23,7 @@ export class EnemyManager {
       { name: 'Alon', model: '/models/alon_dancing.fbx', speed: 1.3, swayAmplitude: 0.5, health: 80, damage: 5, color: 0xff4488, isBoss: false, canShoot: true, faceOffset: -90, behavior: 'standard', shootInterval: 3000 },
       { name: 'Slingoor', model: '/models/slingoor_dance.fbx', speed: 1.5, swayAmplitude: 0.7, health: 65, damage: 6, color: 0x44ff88, isBoss: false, canShoot: true, faceOffset: -90, behavior: 'flanker', shootInterval: 2800 },
       { name: 'Pow Dive', model: '/models/pow_dive.fbx', speed: 2.2, swayAmplitude: 0.1, health: 70, damage: 6, color: 0xff8844, isBoss: false, diveDamage: 12, faceOffset: -90, behavior: 'charger' },
-      { name: 'Jump Attack', model: '/models/jump_attack.fbx', speed: 1.4, swayAmplitude: 0.3, health: 350, damage: 15, color: 0xaa66ff, isBoss: false, jumpDamage: 30, scaleMultiplier: 2, isJumpAttack: true, faceOffset: 0, behavior: 'jumper' },
+      { name: 'Jump Attack', model: '/models/jump_attack.fbx', speed: 1.15, swayAmplitude: 0.3, health: 200, damage: 7, color: 0xaa66ff, isBoss: false, jumpDamage: 14, scaleMultiplier: 1.65, isJumpAttack: true, faceOffset: 0, behavior: 'jumper' },
       { name: 'Marcell', model: '/models/marcell_dancing.fbx', speed: 1.1, swayAmplitude: 0.2, health: 100, damage: 6, color: 0xffaa44, isBoss: false, canShoot: true, faceOffset: -90, scaleMultiplier: 1.35, behavior: 'tank', shootInterval: 2500 },
       { name: 'Thriller', model: '/models/thriller_part3.fbx', speed: 1.6, swayAmplitude: 0.6, health: 75, damage: 7, color: 0x9933ff, isBoss: false, canShoot: true, faceOffset: -90, behavior: 'erratic', shootInterval: 2600 }
     ];
@@ -32,7 +32,7 @@ export class EnemyManager {
       { name: 'MEGA Alon', model: '/models/alon_dancing.fbx', speed: 1.8, swayAmplitude: 0.6, health: 350, damage: 10, color: 0xff0000, isBoss: true, canShoot: true, faceOffset: -90, behavior: 'standard', shootInterval: 2200 },
       { name: 'MEGA Slingoor', model: '/models/slingoor_dance.fbx', speed: 2.0, swayAmplitude: 0.8, health: 400, damage: 12, color: 0x00ff00, isBoss: true, canShoot: true, faceOffset: -90, behavior: 'flanker', shootInterval: 2000 },
       { name: 'MEGA Pow Dive', model: '/models/pow_dive.fbx', speed: 2.6, swayAmplitude: 0.1, health: 380, damage: 10, color: 0xff6600, isBoss: true, diveDamage: 20, faceOffset: -90, behavior: 'charger' },
-      { name: 'MEGA Jump Attack', model: '/models/jump_attack.fbx', speed: 1.8, swayAmplitude: 0.4, health: 900, damage: 20, color: 0x8844ff, isBoss: true, jumpDamage: 50, scaleMultiplier: 2.5, isJumpAttack: true, faceOffset: 0, behavior: 'jumper' },
+      { name: 'MEGA Jump Attack', model: '/models/jump_attack.fbx', speed: 1.45, swayAmplitude: 0.4, health: 520, damage: 11, color: 0x8844ff, isBoss: true, jumpDamage: 22, scaleMultiplier: 2.1, isJumpAttack: true, faceOffset: 0, behavior: 'jumper' },
       { name: 'MEGA Marcell', model: '/models/marcell_dancing.fbx', speed: 1.5, swayAmplitude: 0.3, health: 450, damage: 10, color: 0xff8800, isBoss: true, canShoot: true, faceOffset: -90, scaleMultiplier: 1.4, behavior: 'tank', shootInterval: 1800 },
       { name: 'MEGA Thriller', model: '/models/thriller_part3.fbx', speed: 2.0, swayAmplitude: 0.7, health: 320, damage: 10, color: 0xbb66ff, isBoss: true, canShoot: true, faceOffset: -90, behavior: 'erratic', shootInterval: 1800 }
     ];
@@ -724,15 +724,15 @@ export class EnemyManager {
 
       // ── Jump Attack leap mechanic ──
       if (data.type.isJumpAttack && !data.isLeaping) {
-        if (now > data.nextLeapTime && dist < 15 && dist > 3) {
+        if (now > data.nextLeapTime && dist < 12 && dist > 4) {
           data.isLeaping = true;
           data.leapStartTime = now;
-          data.leapDuration = 600;
+          data.leapDuration = 680;
           data.leapStartX = enemy.position.x;
           data.leapStartZ = enemy.position.z;
           data.leapTargetX = playerPosition.x;
           data.leapTargetZ = playerPosition.z;
-          data.nextLeapTime = now + 4000 + Math.random() * 2000;
+          data.nextLeapTime = now + 6200 + Math.random() * 2800;
         }
       }
 

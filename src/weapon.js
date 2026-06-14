@@ -13,22 +13,22 @@ export const WEAPON_DEFS = {
     sound: { freq: 120, end: 40, dur: 0.08, type: 'sawtooth' }
   },
   gatling: {
-    name: 'GATLING GUN', damage: 10, fireRate: 55, rapidRate: 30,
+    name: 'GATLING GUN', damage: 28, fireRate: 55, rapidRate: 30,
     colors: [0xffdd00, 0xffaa00],
     projDuration: 0.07,
     sound: { freq: 300, end: 150, dur: 0.04, type: 'square' }
   },
   laser: {
-    name: 'LASER CANNON', damage: 50, fireRate: 450, rapidRate: 250,
+    name: 'LASER CANNON', damage: 105, fireRate: 450, rapidRate: 250,
     colors: [0x00ffff, 0x00aaff],
     projDuration: 0.05,
     sound: { freq: 1200, end: 600, dur: 0.1, type: 'sine' }
   },
   rocket: {
-    name: 'ROCKET LAUNCHER', damage: 55, fireRate: 900, rapidRate: 600,
+    name: 'ROCKET LAUNCHER', damage: 88, fireRate: 900, rapidRate: 600,
     colors: [0xff4400, 0xff2200],
     projDuration: 0.18,
-    aoeRadius: 5, aoeDamage: 25,
+    aoeRadius: 6, aoeDamage: 78,
     sound: { freq: 80, end: 30, dur: 0.15, type: 'sawtooth' }
   }
 };
