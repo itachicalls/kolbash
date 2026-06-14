@@ -10,7 +10,8 @@ import {
   formatRunTime,
   getLeaderboardEntries,
   getUsername,
-  setUsername
+  setUsername,
+  TOP_LEADERBOARD_SIZE
 } from './player-progress.js';
 
 export const STORE_ITEMS = [
@@ -276,16 +277,24 @@ export class UIManager {
     let leaderboardResult = null;
 
     const refreshLeaderboard = () => {
-      this.renderLeaderboardInto(this.elements.vicLeaderboardList, api.getLeaderboardEntries?.(10) || [], {
-        emptyText: 'BE THE FIRST ON THE FLOOR',
-        rankClass: 'vic-lb-rank',
-        nameClass: 'vic-lb-name',
-        timeClass: 'vic-lb-time'
-      });
-      if (this.elements.vicRankBadge && leaderboardResult?.rank) {
-        this.elements.vicRankBadge.textContent = `YOUR RANK #${leaderboardResult.rank}`;
-      } else if (this.elements.vicRankBadge) {
-        this.elements.vicRankBadge.textContent = '';
+      this.renderLeaderboardInto(
+        this.elements.vicLeaderboardList,
+        api.getLeaderboardEntries?.(TOP_LEADERBOARD_SIZE) || [],
+        {
+          emptyText: 'NO CLEARS YET — BEAT TOLY TO CLAIM #1',
+          rankClass: 'vic-lb-rank',
+          nameClass: 'vic-lb-name',
+          timeClass: 'vic-lb-time'
+        }
+      );
+      if (this.elements.vicRankBadge) {
+        if (leaderboardResult?.madeBoard && leaderboardResult.rank) {
+          this.elements.vicRankBadge.textContent = `ALL-TIME #${leaderboardResult.rank}`;
+        } else if (leaderboardResult && !leaderboardResult.madeBoard) {
+          this.elements.vicRankBadge.textContent = 'OUTSIDE TOP 5 — RUN IT BACK';
+        } else {
+          this.elements.vicRankBadge.textContent = '';
+        }
       }
     };
 
@@ -396,8 +405,8 @@ export class UIManager {
   }
 
   renderTitleLeaderboard() {
-    this.renderLeaderboardInto(this.elements.titleLeaderboardList, getLeaderboardEntries(10), {
-      emptyText: 'NO CLEARS YET — CLAIM THE DISCO',
+    this.renderLeaderboardInto(this.elements.titleLeaderboardList, getLeaderboardEntries(TOP_LEADERBOARD_SIZE), {
+      emptyText: 'NO CLEARS YET — BEAT TOLY TO CLAIM #1',
       rankClass: 'title-lb-rank',
       nameClass: 'title-lb-name',
       timeClass: 'title-lb-time'
@@ -465,8 +474,8 @@ export class UIManager {
     this.elements.gameMainMenuBtn = wire('game-main-menu-btn', onMainMenu);
     this.elements.gameChangeFighterBtn = wire('game-change-fighter-btn', onChangeCharacter);
 
-    this.renderLeaderboardInto(this.elements.gameOverLeaderboardList, getLeaderboardEntries(5), {
-      emptyText: 'NO CLEARS POSTED YET',
+    this.renderLeaderboardInto(this.elements.gameOverLeaderboardList, getLeaderboardEntries(TOP_LEADERBOARD_SIZE), {
+      emptyText: 'NO ALL-TIME CLEARS YET',
       rankClass: 'go-lb-rank',
       nameClass: 'go-lb-name',
       timeClass: 'go-lb-time'

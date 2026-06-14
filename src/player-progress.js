@@ -10,7 +10,8 @@ const LS_LEADERBOARD = 'kolbash_leaderboard_v1';
 const LS_VAULT = 'kolbash_wallet_vault_v1';
 const LS_CLAIMED = 'kolbash_claimed_wallets_v1';
 
-const MAX_LEADERBOARD = 50;
+/** All-time hall of fame — only the five fastest clears are kept; updates when beaten. */
+export const TOP_LEADERBOARD_SIZE = 5;
 const USERNAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 
 export function formatRunTime(ms) {
@@ -67,17 +68,28 @@ function writeJson(key, value) {
   }
 }
 
-export function getLeaderboardEntries(limit = 10) {
-  const rows = readJson(LS_LEADERBOARD, []);
+function normalizeLeaderboardRows(rows) {
   if (!Array.isArray(rows)) return [];
   return rows
     .filter((r) => r && typeof r.timeMs === 'number' && r.username)
     .sort((a, b) => a.timeMs - b.timeMs)
-    .slice(0, limit);
+    .slice(0, TOP_LEADERBOARD_SIZE);
+}
+
+export function getLeaderboardEntries(limit = TOP_LEADERBOARD_SIZE) {
+  const raw = readJson(LS_LEADERBOARD, []);
+  const rows = normalizeLeaderboardRows(raw);
+  if (Array.isArray(raw) && raw.length !== rows.length) {
+    writeJson(LS_LEADERBOARD, rows);
+  }
+  const cap = Math.min(Math.max(1, limit), TOP_LEADERBOARD_SIZE);
+  return rows.slice(0, cap);
 }
 
 /**
+ * Submit a clear time. If it ranks in the all-time top five, the board updates and persists.
  * @param {{ username: string; timeMs: number; score: number; characterId: string }} run
+ * @returns {{ entry: object; rank: number; madeBoard: boolean } | null}
  */
 export function submitLeaderboardRun(run) {
   const username = normalizeUsername(run?.username) || getUsername();
@@ -91,16 +103,18 @@ export function submitLeaderboardRun(run) {
     at: new Date().toISOString()
   };
 
-  const rows = readJson(LS_LEADERBOARD, []);
-  const list = Array.isArray(rows) ? rows : [];
-  list.push(entry);
-  list.sort((a, b) => a.timeMs - b.timeMs);
-  writeJson(LS_LEADERBOARD, list.slice(0, MAX_LEADERBOARD));
+  const prev = normalizeLeaderboardRows(readJson(LS_LEADERBOARD, []));
+  const merged = [...prev, entry].sort((a, b) => a.timeMs - b.timeMs);
+  const top = merged.slice(0, TOP_LEADERBOARD_SIZE);
+  writeJson(LS_LEADERBOARD, top);
 
-  const rank = list.findIndex(
+  const rankIdx = top.findIndex(
     (r) => r.username === entry.username && r.timeMs === entry.timeMs && r.at === entry.at
   );
-  return { entry, rank: rank >= 0 ? rank + 1 : list.length };
+  if (rankIdx < 0) {
+    return { entry, rank: null, madeBoard: false };
+  }
+  return { entry, rank: rankIdx + 1, madeBoard: true };
 }
 
 export function getVaultWallets() {
