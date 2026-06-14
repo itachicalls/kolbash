@@ -200,6 +200,10 @@ class Game {
 
     /** After clearing wave `BOSS_TRIGGER_AFTER_WAVE` (see waves.js), countdown starts the finale boss. */
     this._pendingBossAfterDare = false;
+    /** Death during Toly — retry keeps waves/upgrades/coins instead of `restartRun()`. */
+    this._diedDuringBossFight = false;
+    /** Skip finale cutscene on boss rematch (set by `retryBossFight`). */
+    this._bossRetrySkipCutscene = false;
     /** @type {BossEncounter | null} */
     this.bossEncounter = null;
 
@@ -1449,6 +1453,8 @@ class Game {
 
   /** After game-over: back to dossier without starting a new run. */
   leaveRunToTitleFromGameOver(opts = {}) {
+    this._diedDuringBossFight = false;
+    this._bossRetrySkipCutscene = false;
     this.player.reset();
     this.player.controls.unlock();
     this.deathSequenceActive = false;
@@ -1517,8 +1523,85 @@ class Game {
     }
   }
 
+  _syncRunHudFromState() {
+    this.ui.updateHealth(this.player.health, this.player.maxHealth);
+    this.ui.updateStamina(this.player.stamina, this.player.staminaMax, this.player.staminaBoostActive);
+    this.ui.updateCoins(this.coins);
+    this.ui.updateScore(this.score);
+    this.ui.updateWave(this.waveManager?.currentWave ?? BOSS_TRIGGER_AFTER_WAVE);
+    this.ui.updateStats(this.kills, this.damageDealt);
+    this.ui.updateLevelName(this.arena.getLevelName());
+    this.ui.updateWeaponName(WEAPON_DEFS[this.currentWeapon]?.name || 'DISCO BLASTER');
+    this.ui.updateSpecialCharge(this.specialCharge, SPECIAL_CHARGE_KILLS);
+    this.ui.setSpecialReady(this.specialReady);
+    this.ui.updatePowerup('rapidFire', 0);
+    this.ui.updatePowerup('slowMotion', 0);
+    this.ui.updatePowerup('alienShip', 0);
+  }
+
+  /** Rematch Toly after game over — keeps run progress (waves, store, score, timer). */
+  retryBossFight() {
+    if (!this.modelsReady) return;
+    this._diedDuringBossFight = false;
+    this.pauseMenuActive = false;
+    this.ui.hidePauseMenu();
+    if (this._resizeDebounceT) {
+      clearTimeout(this._resizeDebounceT);
+      this._resizeDebounceT = null;
+    }
+
+    this._waveCountdownSerial = (this._waveCountdownSerial || 0) + 1;
+    this._waveCountdownRunning = false;
+    resumeSharedAudioContext();
+    this.deathSequenceActive = false;
+    if (this.deathScene?.active) this.deathScene.stop();
+
+    this.screenShake = 0;
+    this.poisonTickTime = 0;
+    this.specialAttackActive = false;
+    this._pendingSpecialStart = null;
+    this.specialAttack?.stop();
+    this.waveClear?.stop(false);
+
+    this.player.reset();
+    this.enemyManager.clear();
+    this.itemManager.clear();
+    this.bossEncounter?.reset();
+    this.clockTowerEgg?.reset();
+    this.ui.clearBossEncounterHud();
+    this.clearAllyShips();
+
+    this._pendingBossAfterDare = true;
+    this._bossRetrySkipCutscene = true;
+
+    this.ui.showGame();
+    this._syncRunHudFromState();
+    this._syncMobileAutofireBtn?.();
+
+    if (this.isMobile) {
+      this.player.controls.lock();
+      document.getElementById('mobile-controls')?.style.setProperty('display', 'block');
+    } else {
+      this.player.controls.lock();
+    }
+    document.getElementById('hud-touch-layer')?.style.setProperty('display', '');
+    document.getElementById('hud')?.style.setProperty('display', '');
+
+    this.isRunning = true;
+    this.clock.start();
+    this.ui.syncMusicButton?.();
+
+    this.player.inputFrozen = true;
+    this.weapon.isHolding = false;
+
+    this.animate();
+    void this.runWaveCountdownThenStartWave();
+  }
+
   restartRun() {
     if (!this.modelsReady) return;
+    this._diedDuringBossFight = false;
+    this._bossRetrySkipCutscene = false;
     this.pauseMenuActive = false;
     this.ui.hidePauseMenu();
     if (this._resizeDebounceT) {
@@ -1645,6 +1728,7 @@ class Game {
 
       let wavePrimed = false;
       let bossAfter = false;
+      let skipBossCutscene = false;
       /** When finale boss path: if false after cutscene / begin, skip post-cutscene countdown + announcement. */
       let bossFlowContinue = true;
       try {
@@ -1654,11 +1738,17 @@ class Game {
 
         if (bossAfter) {
           this._pendingBossAfterDare = false;
+          skipBossCutscene = this._bossRetrySkipCutscene;
+          if (skipBossCutscene) this._bossRetrySkipCutscene = false;
           try {
-            this.gameMusic?.pauseBedForCutscene();
-            const bossLoad = this.bossEncounter.begin();
-            const introClip = getFinaleBossIntroClip(this.selectedCharacterId);
-            await this.ui.runBossCutsceneWithBossLoad(bossLoad, introClip);
+            if (skipBossCutscene) {
+              await this.bossEncounter.begin();
+            } else {
+              this.gameMusic?.pauseBedForCutscene();
+              const bossLoad = this.bossEncounter.begin();
+              const introClip = getFinaleBossIntroClip(this.selectedCharacterId);
+              await this.ui.runBossCutsceneWithBossLoad(bossLoad, introClip);
+            }
             if (serial !== this._waveCountdownSerial || !this.isRunning || this.player.isDead) {
               this.bossEncounter.reset();
               this.gameMusic?.leaveBossFight();
@@ -1709,7 +1799,7 @@ class Game {
           }
           this.ui.showWaveAnnouncement(
             BOSS_TRIGGER_AFTER_WAVE,
-            'FINALE — HE OWNS THE WALLS',
+            skipBossCutscene ? 'TOLY REMATCH — FINISH HIM' : 'FINALE — HE OWNS THE WALLS',
             this.arena.getLevelName(),
             false
           );
@@ -2394,6 +2484,7 @@ class Game {
 
   beginDeathSequence() {
     if (this.deathSequenceActive) return;
+    this._diedDuringBossFight = this.bossEncounter?.isActive() === true;
     this._pendingSpecialStart = null;
     this._pendingBossAfterDare = false;
     this.bossEncounter?.reset();
@@ -2439,6 +2530,7 @@ class Game {
     if (this.isMobile) {
       document.getElementById('mobile-controls')?.style.setProperty('display', 'none');
     }
+    const bossRetry = this._diedDuringBossFight;
     this.ui.showGameOver(
       {
         wave: this.waveManager.currentWave,
@@ -2448,10 +2540,11 @@ class Game {
         damageDealt: this.damageDealt
       },
       {
-        onRetry: () => this.restartRun(),
+        onRetry: () => (bossRetry ? this.retryBossFight() : this.restartRun()),
         onMainMenu: () => this.leaveRunToTitleFromGameOver({ focusCarousel: false }),
         onChangeCharacter: () => this.leaveRunToTitleFromGameOver({ focusCarousel: true })
-      }
+      },
+      { bossRetry }
     );
   }
 

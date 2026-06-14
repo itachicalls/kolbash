@@ -504,9 +504,22 @@ export class UIManager {
   /**
    * @param {object} stats
    * @param {(() => void) | { onRetry?: () => void; onMainMenu?: () => void; onChangeCharacter?: () => void }} callbacks
+   * @param {{ bossRetry?: boolean }} [opts]
    */
-  showGameOver(stats, callbacks) {
+  showGameOver(stats, callbacks, opts = {}) {
     this.setVisibility('gameover');
+    const bossRetry = opts.bossRetry === true;
+    const titleEl = this.elements.gameOver?.querySelector('.go-title');
+    const subEl = this.elements.gameOver?.querySelector('.go-sub');
+    if (titleEl) titleEl.textContent = bossRetry ? 'TOLY STILL STANDS' : 'WRECKED';
+    if (subEl) {
+      subEl.textContent = bossRetry
+        ? 'RETRY THE BOSS — YOUR RUN IS SAVED'
+        : 'THE DISCO CLAIMS ANOTHER';
+    }
+    const retryEl = document.getElementById('game-retry-btn');
+    if (retryEl) retryEl.textContent = bossRetry ? 'RETRY BOSS FIGHT' : 'TRY AGAIN';
+
     if (this.elements.finalWave) this.elements.finalWave.textContent = stats.wave;
     if (this.elements.finalScore) this.elements.finalScore.textContent = stats.score.toLocaleString();
     if (this.elements.finalKills) this.elements.finalKills.textContent = (stats.kills ?? 0).toLocaleString();
