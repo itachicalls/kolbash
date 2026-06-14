@@ -221,6 +221,66 @@ class Game {
 
     /** Monotonic clock for speed-run leaderboard (set in `restartRun`). */
     this._runStartedAt = 0;
+
+    /** Bumped to retire stale `requestAnimationFrame` chains (prevents duplicate sim loops). */
+    this._animateGen = 0;
+    this._inputFrozenSince = 0;
+    this._countdownRunningSince = 0;
+  }
+
+  /** Start (or restart) the single gameplay render loop. */
+  _kickAnimateLoop() {
+    this._animateGen = (this._animateGen || 0) + 1;
+    this.animate();
+  }
+
+  _scheduleAnimateFrame() {
+    if (!this.isRunning) return;
+    const gen = this._animateGen || 0;
+    requestAnimationFrame(() => {
+      if (gen === (this._animateGen || 0)) this.animate();
+    });
+  }
+
+  _runGameplayWatchdogs(now) {
+    if (!this.isRunning || this.player?.isDead) {
+      this._inputFrozenSince = 0;
+      this._countdownRunningSince = 0;
+      return;
+    }
+
+    const inputBlocked =
+      this._waveCountdownRunning ||
+      this.specialAttackActive ||
+      this.waveClear?.active ||
+      this.deathSequenceActive ||
+      this.pauseMenuActive;
+
+    if (this.player.inputFrozen && !inputBlocked) {
+      if (!this._inputFrozenSince) this._inputFrozenSince = now;
+      else if (now - this._inputFrozenSince > 45000) {
+        console.warn('[KOL BASH] inputFrozen watchdog — resuming controls');
+        this.player.inputFrozen = false;
+        this._inputFrozenSince = 0;
+      }
+    } else {
+      this._inputFrozenSince = 0;
+    }
+
+    if (this._waveCountdownRunning) {
+      if (!this._countdownRunningSince) this._countdownRunningSince = now;
+      else if (now - this._countdownRunningSince > 120000) {
+        console.warn('[KOL BASH] wave countdown watchdog — clearing stuck countdown');
+        this._waveCountdownSerial = (this._waveCountdownSerial || 0) + 1;
+        this._waveCountdownRunning = false;
+        this._overlayResumeBusy = false;
+        this.ui.hideWaveCountdown();
+        this.player.inputFrozen = false;
+        this._countdownRunningSince = 0;
+      }
+    } else {
+      this._countdownRunningSince = 0;
+    }
   }
 
   isCinematicReadyForSelection() {
@@ -658,6 +718,7 @@ class Game {
         );
         // #endregion
         this._glContextLost = true;
+        this._animateGen = (this._animateGen || 0) + 1;
         this.isRunning = false;
         this.clock.stop();
         this._mobileDbg?.mark('WEBGL_CONTEXT_LOST', 'stopping loop');
@@ -1355,6 +1416,7 @@ class Game {
   returnToTitle(opts = {}) {
     this.pauseMenuActive = false;
     this.ui.hidePauseMenu();
+    this._animateGen = (this._animateGen || 0) + 1;
     this._pendingBossAfterDare = false;
     this.bossEncounter?.reset();
     this.clockTowerEgg?.reset();
@@ -1423,7 +1485,7 @@ class Game {
     } else {
       this.player.controls.lock();
     }
-    this.animate();
+    this._kickAnimateLoop();
   }
 
   quitRunToTitleFromPause() {
@@ -1594,7 +1656,7 @@ class Game {
     this.player.inputFrozen = true;
     this.weapon.isHolding = false;
 
-    this.animate();
+    this._kickAnimateLoop();
     void this.runWaveCountdownThenStartWave();
   }
 
@@ -1694,7 +1756,7 @@ class Game {
     this.player.inputFrozen = true;
     this.weapon.isHolding = false;
 
-    this.animate();
+    this._kickAnimateLoop();
     void this.runWaveCountdownThenStartWave();
   }
 
@@ -1952,7 +2014,7 @@ class Game {
     this.player.inputFrozen = true;
     this.weapon.isHolding = false;
 
-    this.animate();
+    this._kickAnimateLoop();
     void this.runWaveCountdownThenStartWave();
   }
 
@@ -2362,8 +2424,8 @@ class Game {
       const dist = Math.sqrt((ex - px) ** 2 + (ez - pz) ** 2);
       if (dist < 2.0) {
         const lastAttack = enemy.userData.lastAttackTime || 0;
+        const type = enemy.userData.type;
         if (now - lastAttack > (type.isJumpAttack ? 1300 : 800)) {
-          const type = enemy.userData.type;
           const base = type.diveDamage ?? type.jumpDamage ?? type.damage;
           const damage = Math.round(
             base * (enemy.userData.chaosMeleeMul ?? 1) * (enemy.userData.finaleDmgMul ?? 1)
@@ -2574,10 +2636,14 @@ class Game {
 
     const skipFrameHidden = this.isMobile && typeof document !== 'undefined' && document.hidden;
 
+    if (this.isRunning) {
+      this._scheduleAnimateFrame();
+    }
+
     if (this.isRunning && this.waveClear?.active) {
-      requestAnimationFrame(() => this.animate());
       if (skipFrameHidden) return;
       const nowWc = performance.now();
+      this._runGameplayWatchdogs(nowWc);
       if (this._throttleFpsSkip(nowWc)) return;
       try {
         this._syncMobileAutofireFlag();
@@ -2615,14 +2681,13 @@ class Game {
       return;
     }
 
-    requestAnimationFrame(() => this.animate());
-
     if (skipFrameHidden) return;
 
     const now = performance.now();
     if (this._throttleFpsSkip(now)) return;
 
     try {
+      this._runGameplayWatchdogs(now);
       this._syncMobileAutofireFlag();
       const delta = this._computeSimDelta(now);
       this._mobileDbg?.tickFrame(delta * 1000);

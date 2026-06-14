@@ -862,7 +862,7 @@ export class UIManager {
     }
 
     try {
-      await videoDone;
+      await Promise.race([videoDone, sleep(90000)]);
       overlay.classList.add('is-bridge-phase');
       const minBridgeMs = skipRequested ? 220 : 480;
       await Promise.all([bossLoadPromise, sleep(minBridgeMs)]);
