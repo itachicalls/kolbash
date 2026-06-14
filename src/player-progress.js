@@ -12,7 +12,17 @@ const LS_CLAIMED = 'kolbash_claimed_wallets_v1';
 
 /** All-time hall of fame — only the five fastest clears are kept; updates when beaten. */
 export const TOP_LEADERBOARD_SIZE = 5;
-const USERNAME_RE = /^[A-Za-z0-9_]{3,16}$/;
+/** Letters, numbers, underscore, hyphen — 2–16 chars after trim. */
+const USERNAME_RE = /^[A-Za-z0-9_-]{2,16}$/;
+
+export function getUsernameValidationError(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return 'ENTER A CALLSIGN';
+  if (s.length < 2) return 'MIN 2 CHARACTERS';
+  if (s.length > 16) return 'MAX 16 CHARACTERS';
+  if (!USERNAME_RE.test(s)) return 'USE LETTERS, NUMBERS, _ OR - ONLY';
+  return null;
+}
 
 export function formatRunTime(ms) {
   const safe = Math.max(0, Math.floor(ms));
@@ -39,6 +49,7 @@ export function getUsername() {
 }
 
 export function setUsername(raw) {
+  if (getUsernameValidationError(raw)) return false;
   const u = normalizeUsername(raw);
   if (!u) return false;
   try {

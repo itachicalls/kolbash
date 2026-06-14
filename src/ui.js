@@ -10,6 +10,7 @@ import {
   formatRunTime,
   getLeaderboardEntries,
   getUsername,
+  getUsernameValidationError,
   setUsername,
   TOP_LEADERBOARD_SIZE
 } from './player-progress.js';
@@ -159,6 +160,8 @@ export class UIManager {
       titleLeaderboardList: document.getElementById('title-leaderboard-list'),
       titleUsernameInput: document.getElementById('title-username-input'),
       titleUsernameSave: document.getElementById('title-username-save'),
+      titleUsernameStatus: document.getElementById('title-username-status'),
+      vicUsernameStatus: document.getElementById('vic-username-status'),
 
       specialChargeFill: document.getElementById('special-charge-fill'),
       specialVortexOrb: document.getElementById('special-vortex-orb'),
@@ -179,6 +182,13 @@ export class UIManager {
     this.crosshairEl = document.getElementById('crosshair');
     /** Avoid stacking many `setTimeout` callbacks when coin text updates in bursts (mobile). */
     this._coinBounceScheduled = false;
+
+    this._wireCallsignSave(
+      this.elements.titleUsernameSave,
+      this.elements.titleUsernameInput,
+      this.elements.titleUsernameStatus,
+      () => this.renderTitleLeaderboard()
+    );
   }
 
   updateCrosshair(weapon) {
@@ -200,6 +210,57 @@ export class UIManager {
    * @param {object[]} rows
    * @param {{ emptyText?: string; rankClass?: string; nameClass?: string; timeClass?: string }} [opts]
    */
+  /**
+   * @param {HTMLInputElement | null} inputEl
+   * @param {HTMLElement | null} statusEl
+   * @param {() => void} [onSuccess]
+   */
+  _saveCallsignFromInput(inputEl, statusEl, onSuccess) {
+    const raw = inputEl?.value ?? '';
+    const err = getUsernameValidationError(raw);
+    if (err) {
+      if (statusEl) {
+        statusEl.textContent = err;
+        statusEl.className = 'callsign-status callsign-status-err';
+      }
+      inputEl?.classList.add('callsign-input-error');
+      setTimeout(() => inputEl?.classList.remove('callsign-input-error'), 700);
+      return false;
+    }
+    if (!setUsername(raw)) {
+      if (statusEl) {
+        statusEl.textContent = 'COULD NOT SAVE — TRY AGAIN';
+        statusEl.className = 'callsign-status callsign-status-err';
+      }
+      return false;
+    }
+    const saved = getUsername();
+    if (inputEl && saved) inputEl.value = saved;
+    if (statusEl) {
+      statusEl.textContent = `LOCKED IN: ${saved}`;
+      statusEl.className = 'callsign-status callsign-status-ok';
+    }
+    onSuccess?.();
+    return true;
+  }
+
+  _wireCallsignSave(btn, inputEl, statusEl, onSuccess) {
+    if (!btn || btn.dataset.callsignWired === '1') return;
+    btn.dataset.callsignWired = '1';
+    const run = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._saveCallsignFromInput(inputEl, statusEl, onSuccess);
+    };
+    btn.addEventListener('click', run);
+    inputEl?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this._saveCallsignFromInput(inputEl, statusEl, onSuccess);
+      }
+    });
+  }
+
   renderLeaderboardInto(listEl, rows, opts = {}) {
     if (!listEl) return;
     const emptyText = opts.emptyText || 'NO CLEARS YET — BEAT TOLY TO POST A TIME';
@@ -339,14 +400,16 @@ export class UIManager {
       const btn = this.elements.vicUsernameSave.cloneNode(true);
       this.elements.vicUsernameSave.replaceWith(btn);
       this.elements.vicUsernameSave = document.getElementById('vic-username-save');
-      bindPrimaryPointerUpOnce(this.elements.vicUsernameSave, () => {
-        const ok = api.setUsername?.(this.elements.vicUsernameInput?.value);
-        if (ok) {
+      this._wireCallsignSave(
+        this.elements.vicUsernameSave,
+        this.elements.vicUsernameInput,
+        this.elements.vicUsernameStatus,
+        () => {
           this.elements.vicUsernameInput?.closest('.vic-callsign-panel')?.classList.add('has-callsign');
           leaderboardResult = submitRun();
           refreshLeaderboard();
         }
-      });
+      );
     }
 
     if (this.elements.vicPackOpenBtn) {
@@ -413,18 +476,18 @@ export class UIManager {
     });
 
     const input = this.elements.titleUsernameInput;
-    const saveBtn = this.elements.titleUsernameSave;
-    if (input) input.value = getUsername() || '';
-
-    if (saveBtn && !saveBtn.dataset.wired) {
-      saveBtn.dataset.wired = '1';
-      saveBtn.addEventListener('pointerup', (e) => {
-        if (e.button > 0) return;
-        e.preventDefault();
-        if (setUsername(input?.value)) {
-          this.renderTitleLeaderboard();
+    const statusEl = this.elements.titleUsernameStatus;
+    if (input) {
+      input.value = getUsername() || '';
+      if (getUsername()) {
+        if (statusEl) {
+          statusEl.textContent = `LOCKED IN: ${getUsername()}`;
+          statusEl.className = 'callsign-status callsign-status-ok';
         }
-      });
+      } else if (statusEl) {
+        statusEl.textContent = '';
+        statusEl.className = 'callsign-status';
+      }
     }
   }
 

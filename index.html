@@ -1370,12 +1370,13 @@
       font-family: 'Orbitron', monospace; font-size: 0.62rem; letter-spacing: 0.32em;
       color: rgba(255, 200, 255, 0.7); margin-bottom: 0.5rem;
     }
-    .vic-callsign-row { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; }
+    .vic-callsign-row { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; pointer-events: auto; }
     #vic-username-input {
       flex: 1 1 180px; min-width: 0; max-width: 280px;
       font-family: 'Orbitron', monospace; font-size: 0.85rem; letter-spacing: 0.08em;
       padding: 0.55rem 0.75rem; border-radius: 8px;
       border: 1px solid rgba(0, 255, 255, 0.35); background: rgba(0, 0, 0, 0.45); color: #e8f8ff;
+      user-select: text; -webkit-user-select: text; touch-action: manipulation; pointer-events: auto;
     }
     #vic-username-input.vic-input-error { border-color: #ff4466; animation: vicInputShake 0.35s ease; }
     @keyframes vicInputShake {
@@ -1388,6 +1389,7 @@
       padding: 0.55rem 1.1rem; letter-spacing: 0.1em;
       background: linear-gradient(90deg, #ff00aa, #00ffff); border: none; color: #000;
       clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%); cursor: pointer;
+      touch-action: manipulation; pointer-events: auto;
     }
 
     #vic-pack-stage {
@@ -1566,6 +1568,7 @@
       border: 1px solid rgba(0, 255, 200, 0.22);
       background: linear-gradient(145deg, rgba(10, 6, 22, 0.92), rgba(4, 8, 16, 0.94));
       box-shadow: 0 0 40px rgba(0, 255, 200, 0.08);
+      pointer-events: auto;
     }
     .title-speed-hall-head { text-align: center; margin-bottom: 0.55rem; }
     .title-speed-badge {
@@ -1591,17 +1594,30 @@
       display: block; font-family: 'Orbitron', monospace; font-size: 0.58rem;
       letter-spacing: 0.24em; color: rgba(255,200,255,0.65); margin-bottom: 0.35rem;
     }
-    .title-callsign-inputs { display: flex; gap: 0.45rem; justify-content: center; flex-wrap: wrap; }
+    .title-callsign-inputs { display: flex; gap: 0.45rem; justify-content: center; flex-wrap: wrap; pointer-events: auto; }
     .title-username-input {
       font-family: 'Orbitron', monospace; font-size: 0.78rem; padding: 0.45rem 0.65rem;
       border-radius: 8px; border: 1px solid rgba(0,255,255,0.3);
       background: rgba(0,0,0,0.4); color: #e8f8ff; width: min(220px, 60vw);
+      user-select: text; -webkit-user-select: text; touch-action: manipulation;
+      pointer-events: auto;
     }
     .title-username-save {
       font-family: 'Orbitron', monospace; font-size: 0.68rem; font-weight: 700;
       padding: 0.45rem 0.9rem; letter-spacing: 0.1em;
       background: linear-gradient(90deg, #ff00aa, #00ffff); border: none; color: #000;
       clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%); cursor: pointer;
+      touch-action: manipulation; pointer-events: auto;
+    }
+    .callsign-status {
+      min-height: 1.1em; margin-top: 0.4rem; font-size: 0.68rem; letter-spacing: 0.1em;
+      text-align: center;
+    }
+    .callsign-status-ok { color: #00ffaa; }
+    .callsign-status-err { color: #ff6688; }
+    .callsign-input-error, #vic-username-input.callsign-input-error, .title-username-input.callsign-input-error {
+      border-color: #ff4466 !important;
+      animation: vicInputShake 0.35s ease;
     }
 
     /* ===== LOADING ===== */
@@ -1933,9 +1949,10 @@
         <div class="title-callsign-row">
           <label class="title-callsign-label" for="title-username-input">YOUR CALLSIGN (TO POST TIMES)</label>
           <div class="title-callsign-inputs">
-            <input id="title-username-input" class="title-username-input" type="text" maxlength="16" placeholder="3–16 chars" autocomplete="username" />
+            <input id="title-username-input" class="title-username-input" type="text" maxlength="16" placeholder="2–16 chars (A-Z, 0-9, _ -)" autocomplete="username" />
             <button type="button" id="title-username-save" class="title-username-save">SET</button>
           </div>
+          <p id="title-username-status" class="callsign-status" aria-live="polite"></p>
         </div>
       </aside>
 
@@ -2141,9 +2158,10 @@
     <div class="vic-callsign-panel">
       <div class="vic-callsign-kicker">POST YOUR CLEAR TIME (OPTIONAL)</div>
       <div class="vic-callsign-row">
-        <input id="vic-username-input" type="text" maxlength="16" placeholder="CALLSIGN (3–16)" autocomplete="username" />
+        <input id="vic-username-input" type="text" maxlength="16" placeholder="CALLSIGN (2–16)" autocomplete="username" />
         <button type="button" id="vic-username-save">LOCK IN</button>
       </div>
+      <p id="vic-username-status" class="callsign-status" aria-live="polite"></p>
     </div>
 
     <div id="vic-pack-stage" class="vic-bonus-reward">
