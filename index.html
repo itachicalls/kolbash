@@ -1484,9 +1484,11 @@
       font-family: 'Orbitron', monospace; font-size: 0.75rem; color: #ffd700;
       letter-spacing: 0.18em; margin-bottom: 0.35rem;
     }
+    .vic-lb-empty, .title-lb-empty, .lb-empty { text-align: center; color: #667; font-style: italic; display: block; padding: 0.65rem; }
+
     #vic-leaderboard-panel {
-      position: relative; z-index: 1; width: min(96vw, 520px); margin: 0 auto 1rem;
-      text-align: left;
+      position: relative; z-index: 1; width: min(96vw, 520px); margin: 0 auto 1.25rem;
+      text-align: left; display: block;
     }
     .vic-lb-title {
       font-family: 'Orbitron', monospace; font-size: 0.68rem; letter-spacing: 0.28em;
@@ -1507,7 +1509,6 @@
     .vic-lb-rank { font-family: 'Orbitron', monospace; color: #ffd700; font-size: 0.72rem; }
     .vic-lb-name { color: #e8e0f8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .vic-lb-time { font-family: 'Orbitron', monospace; color: #00ffff; font-size: 0.72rem; }
-    .vic-lb-empty, .title-lb-empty { text-align: center; color: #667; font-style: italic; display: block; padding: 0.65rem; }
 
     #victory-done {
       font-family: 'Orbitron', monospace; font-size: 1rem; padding: 0.85rem 3rem;
@@ -1515,8 +1516,35 @@
       color: #000; cursor: pointer; font-weight: 700; letter-spacing: 0.12em;
       clip-path: polygon(6% 0%, 100% 0%, 94% 100%, 0% 100%);
       transition: all 0.2s ease; position: relative; z-index: 1; margin-bottom: 1.5rem;
-      display: none;
+      display: inline-block;
     }
+    .vic-bonus-reward {
+      margin-top: 0.5rem;
+      padding-top: 0.75rem;
+      border-top: 1px dashed rgba(255, 215, 0, 0.25);
+    }
+
+    /* Game over leaderboard */
+    .game-over-leaderboard {
+      width: min(92vw, 420px); margin: 0 auto 1.75rem; text-align: left;
+    }
+    .go-lb-title {
+      font-family: 'Orbitron', monospace; font-size: 0.65rem; letter-spacing: 0.28em;
+      color: rgba(0, 255, 200, 0.75); text-align: center; margin-bottom: 0.45rem;
+    }
+    .game-over-leaderboard-list {
+      list-style: none; margin: 0; padding: 0; border-radius: 10px; overflow: hidden;
+      border: 1px solid rgba(0, 255, 200, 0.2);
+    }
+    .game-over-leaderboard-list li {
+      display: grid; grid-template-columns: 2.2rem 1fr auto; gap: 0.4rem; align-items: center;
+      padding: 0.4rem 0.55rem; font-size: 0.78rem; background: rgba(0, 0, 0, 0.35);
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .game-over-leaderboard-list li:last-child { border-bottom: none; }
+    .go-lb-rank { font-family: 'Orbitron', monospace; color: #ffd700; font-size: 0.68rem; }
+    .go-lb-name { color: #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .go-lb-time { font-family: 'Orbitron', monospace; color: #00ffff; font-size: 0.68rem; }
     #victory-done:hover { transform: scale(1.05); filter: brightness(1.15); }
 
     /* Title screen speed hall */
@@ -1885,24 +1913,24 @@
         </article>
       </div>
 
-      <div class="start-actions">
-        <button type="button" class="start-btn" id="start-game-btn" disabled>LOADING…</button>
-      </div>
-
       <aside class="title-speed-hall" aria-label="Speed run leaderboard">
         <div class="title-speed-hall-head">
-          <span class="title-speed-badge">SPEED RUN HALL</span>
-          <span class="title-speed-sub">FASTEST TOLY CLEARS</span>
+          <span class="title-speed-badge">LEADERBOARD</span>
+          <span class="title-speed-sub">FASTEST TOLY CLEARS ON THIS DEVICE</span>
         </div>
         <ol id="title-leaderboard-list" class="title-leaderboard-list"></ol>
         <div class="title-callsign-row">
-          <label class="title-callsign-label" for="title-username-input">YOUR CALLSIGN</label>
+          <label class="title-callsign-label" for="title-username-input">YOUR CALLSIGN (TO POST TIMES)</label>
           <div class="title-callsign-inputs">
             <input id="title-username-input" class="title-username-input" type="text" maxlength="16" placeholder="3–16 chars" autocomplete="username" />
             <button type="button" id="title-username-save" class="title-username-save">SET</button>
           </div>
         </div>
       </aside>
+
+      <div class="start-actions">
+        <button type="button" class="start-btn" id="start-game-btn" disabled>LOADING…</button>
+      </div>
     </div>
 
     <div class="controls-info">
@@ -2056,6 +2084,10 @@
       <div class="stat"><div class="label">Damage</div><div class="value" id="final-damage">0</div></div>
       <div class="stat"><div class="label">Coins</div><div class="value" id="final-coins">0</div></div>
     </div>
+    <aside class="game-over-leaderboard" aria-label="Leaderboard">
+      <div class="go-lb-title">LEADERBOARD</div>
+      <ol id="game-over-leaderboard-list" class="game-over-leaderboard-list"></ol>
+    </aside>
     <div class="game-over-actions">
       <button type="button" class="restart-btn" id="game-retry-btn">TRY AGAIN</button>
       <div class="game-over-secondary">
@@ -2087,16 +2119,22 @@
       </div>
     </div>
 
+    <div id="vic-leaderboard-panel">
+      <div id="vic-rank-badge"></div>
+      <div class="vic-lb-title">LEADERBOARD — TOP CLEARS</div>
+      <ol id="vic-leaderboard-list"></ol>
+    </div>
+
     <div class="vic-callsign-panel">
-      <div class="vic-callsign-kicker">REGISTER FOR SPEED RUN HALL</div>
+      <div class="vic-callsign-kicker">POST YOUR CLEAR TIME (OPTIONAL)</div>
       <div class="vic-callsign-row">
         <input id="vic-username-input" type="text" maxlength="16" placeholder="CALLSIGN (3–16)" autocomplete="username" />
         <button type="button" id="vic-username-save">LOCK IN</button>
       </div>
     </div>
 
-    <div id="vic-pack-stage">
-      <div class="vic-pack-label">KOL TRENCH DROP — RIP THE PACK</div>
+    <div id="vic-pack-stage" class="vic-bonus-reward">
+      <div class="vic-pack-label">BONUS REWARD — KOL TRENCH DROP</div>
       <div class="vic-pack-burst" aria-hidden="true"></div>
       <div id="vic-pack-card">
         <div class="vic-pack-face vic-pack-front">
@@ -2121,12 +2159,6 @@
         <button type="button" id="vic-wallet-save">SAVE TO VAULT</button>
       </div>
       <div id="vic-wallet-save-status"></div>
-    </div>
-
-    <div id="vic-leaderboard-panel">
-      <div id="vic-rank-badge"></div>
-      <div class="vic-lb-title">SPEED RUN HALL — TOP CLEARS</div>
-      <ol id="vic-leaderboard-list"></ol>
     </div>
 
     <button type="button" id="victory-done">BACK TO TITLE</button>

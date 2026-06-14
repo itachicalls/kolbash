@@ -82,6 +82,7 @@ export class UIManager {
       gameRetryBtn: document.getElementById('game-retry-btn'),
       gameMainMenuBtn: document.getElementById('game-main-menu-btn'),
       gameChangeFighterBtn: document.getElementById('game-change-fighter-btn'),
+      gameOverLeaderboardList: document.getElementById('game-over-leaderboard-list'),
 
       pauseMenu: document.getElementById('pause-menu'),
       pauseResumeBtn: document.getElementById('pause-resume-btn'),
@@ -193,12 +194,42 @@ export class UIManager {
     this.setVisibility('loading');
   }
 
+  /**
+   * @param {HTMLOListElement | HTMLOListElement | null} listEl
+   * @param {object[]} rows
+   * @param {{ emptyText?: string; rankClass?: string; nameClass?: string; timeClass?: string }} [opts]
+   */
+  renderLeaderboardInto(listEl, rows, opts = {}) {
+    if (!listEl) return;
+    const emptyText = opts.emptyText || 'NO CLEARS YET — BEAT TOLY TO POST A TIME';
+    const rankClass = opts.rankClass || 'lb-rank';
+    const nameClass = opts.nameClass || 'lb-name';
+    const timeClass = opts.timeClass || 'lb-time';
+    listEl.replaceChildren();
+    if (!rows?.length) {
+      const li = document.createElement('li');
+      li.className = 'lb-empty';
+      li.textContent = emptyText;
+      listEl.appendChild(li);
+      return;
+    }
+    rows.forEach((row, i) => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <span class="${rankClass}">#${i + 1}</span>
+        <span class="${nameClass}">${row.username}</span>
+        <span class="${timeClass}">${formatRunTime(row.timeMs)}</span>
+      `;
+      listEl.appendChild(li);
+    });
+  }
+
   showVictory(stats, onDone) {
     this.showVictoryCompletion(stats, { onDone });
   }
 
   /**
-   * Campaign clear: stats → callsign → disco pack rip → wallet reveal → speed leaderboard.
+   * Campaign clear: stats + leaderboard (always) → optional callsign post → bonus pack reward.
    * @param {object} stats
    * @param {object} api
    */
@@ -234,10 +265,9 @@ export class UIManager {
     }
     if (this.elements.vicPackCard) this.elements.vicPackCard.classList.remove('is-flipped');
     if (this.elements.vicWalletReveal) this.elements.vicWalletReveal.style.display = 'none';
-    if (this.elements.vicLeaderboardPanel) this.elements.vicLeaderboardPanel.style.display = 'none';
     if (this.elements.vicRankBadge) this.elements.vicRankBadge.textContent = '';
     if (this.elements.vicWalletSaveStatus) this.elements.vicWalletSaveStatus.textContent = '';
-    if (this.elements.victoryDone) this.elements.victoryDone.style.display = 'none';
+    if (this.elements.vicPackOpenBtn) this.elements.vicPackOpenBtn.disabled = false;
 
     screen.style.display = 'flex';
     screen.setAttribute('data-phase', 'stats');
@@ -245,40 +275,29 @@ export class UIManager {
     const wallet = stats.wallet || null;
     let leaderboardResult = null;
 
-    const renderLb = (entries) => {
-      const list = this.elements.vicLeaderboardList;
-      if (!list) return;
-      list.replaceChildren();
-      const rows = entries || api.getLeaderboardEntries?.(8) || [];
-      if (!rows.length) {
-        const li = document.createElement('li');
-        li.className = 'vic-lb-empty';
-        li.textContent = 'BE THE FIRST ON THE FLOOR';
-        list.appendChild(li);
-        return;
-      }
-      rows.forEach((row, i) => {
-        const li = document.createElement('li');
-        li.innerHTML = `
-          <span class="vic-lb-rank">#${i + 1}</span>
-          <span class="vic-lb-name">${row.username}</span>
-          <span class="vic-lb-time">${api.formatRunTime ? api.formatRunTime(row.timeMs) : row.timeMs}</span>
-        `;
-        list.appendChild(li);
+    const refreshLeaderboard = () => {
+      this.renderLeaderboardInto(this.elements.vicLeaderboardList, api.getLeaderboardEntries?.(10) || [], {
+        emptyText: 'BE THE FIRST ON THE FLOOR',
+        rankClass: 'vic-lb-rank',
+        nameClass: 'vic-lb-name',
+        timeClass: 'vic-lb-time'
       });
+      if (this.elements.vicRankBadge && leaderboardResult?.rank) {
+        this.elements.vicRankBadge.textContent = `YOUR RANK #${leaderboardResult.rank}`;
+      } else if (this.elements.vicRankBadge) {
+        this.elements.vicRankBadge.textContent = '';
+      }
     };
+
+    if (this.elements.vicLeaderboardPanel) this.elements.vicLeaderboardPanel.style.display = 'block';
+    if (this.elements.victoryDone) this.elements.victoryDone.style.display = 'inline-block';
+    refreshLeaderboard();
 
     const revealWallet = () => {
       if (!wallet) return;
       if (this.elements.vicWalletReveal) this.elements.vicWalletReveal.style.display = 'flex';
       if (this.elements.vicWalletAddress) this.elements.vicWalletAddress.textContent = wallet.address;
       if (this.elements.vicWalletLabel) this.elements.vicWalletLabel.textContent = wallet.label || 'KOL OPERATIVE';
-      if (this.elements.vicLeaderboardPanel) this.elements.vicLeaderboardPanel.style.display = 'block';
-      renderLb(api.getLeaderboardEntries?.(8));
-      if (this.elements.vicRankBadge && leaderboardResult?.rank) {
-        this.elements.vicRankBadge.textContent = `YOUR RANK #${leaderboardResult.rank}`;
-      }
-      if (this.elements.victoryDone) this.elements.victoryDone.style.display = 'inline-block';
       screen.setAttribute('data-phase', 'complete');
     };
 
@@ -316,6 +335,7 @@ export class UIManager {
         if (ok) {
           this.elements.vicUsernameInput?.closest('.vic-callsign-panel')?.classList.add('has-callsign');
           leaderboardResult = submitRun();
+          refreshLeaderboard();
         }
       });
     }
@@ -325,16 +345,10 @@ export class UIManager {
       this.elements.vicPackOpenBtn.replaceWith(btn);
       this.elements.vicPackOpenBtn = document.getElementById('vic-pack-open-btn');
       bindPrimaryPointerUpOnce(this.elements.vicPackOpenBtn, () => {
-        if (!api.getUsername?.()) {
-          const ok = api.setUsername?.(this.elements.vicUsernameInput?.value);
-          if (!ok) {
-            this.elements.vicUsernameInput?.focus?.();
-            this.elements.vicUsernameInput?.classList.add('vic-input-error');
-            setTimeout(() => this.elements.vicUsernameInput?.classList.remove('vic-input-error'), 900);
-            return;
-          }
+        if (!leaderboardResult) {
+          leaderboardResult = submitRun();
+          refreshLeaderboard();
         }
-        leaderboardResult = submitRun();
         openPack();
       });
     }
@@ -377,32 +391,17 @@ export class UIManager {
 
     if (existingUser) {
       leaderboardResult = submitRun();
+      refreshLeaderboard();
     }
   }
 
   renderTitleLeaderboard() {
-    const list = this.elements.titleLeaderboardList;
-    if (!list) return;
-
-    const rows = getLeaderboardEntries(5);
-    list.replaceChildren();
-
-    if (!rows.length) {
-      const li = document.createElement('li');
-      li.className = 'title-lb-empty';
-      li.textContent = 'NO CLEARS YET — CLAIM THE DISCO';
-      list.appendChild(li);
-    } else {
-      rows.forEach((row, i) => {
-        const li = document.createElement('li');
-        li.innerHTML = `
-          <span class="title-lb-rank">#${i + 1}</span>
-          <span class="title-lb-name">${row.username}</span>
-          <span class="title-lb-time">${formatRunTime(row.timeMs)}</span>
-        `;
-        list.appendChild(li);
-      });
-    }
+    this.renderLeaderboardInto(this.elements.titleLeaderboardList, getLeaderboardEntries(10), {
+      emptyText: 'NO CLEARS YET — CLAIM THE DISCO',
+      rankClass: 'title-lb-rank',
+      nameClass: 'title-lb-name',
+      timeClass: 'title-lb-time'
+    });
 
     const input = this.elements.titleUsernameInput;
     const saveBtn = this.elements.titleUsernameSave;
@@ -424,7 +423,10 @@ export class UIManager {
     if (this.elements.loadingProgress) this.elements.loadingProgress.textContent = message;
   }
 
-  showStartScreen() { this.setVisibility('start'); }
+  showStartScreen() {
+    this.setVisibility('start');
+    this.renderTitleLeaderboard();
+  }
   showGame() { this.setVisibility('game'); }
 
   /**
@@ -462,6 +464,13 @@ export class UIManager {
     this.elements.gameRetryBtn = wire('game-retry-btn', onRetry);
     this.elements.gameMainMenuBtn = wire('game-main-menu-btn', onMainMenu);
     this.elements.gameChangeFighterBtn = wire('game-change-fighter-btn', onChangeCharacter);
+
+    this.renderLeaderboardInto(this.elements.gameOverLeaderboardList, getLeaderboardEntries(5), {
+      emptyText: 'NO CLEARS POSTED YET',
+      rankClass: 'go-lb-rank',
+      nameClass: 'go-lb-name',
+      timeClass: 'go-lb-time'
+    });
   }
 
   showPauseMenu(onResume, onQuitToTitle) {
