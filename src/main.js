@@ -222,24 +222,8 @@ class Game {
     /** Monotonic clock for speed-run leaderboard (set in `restartRun`). */
     this._runStartedAt = 0;
 
-    /** Bumped to retire stale `requestAnimationFrame` chains (prevents duplicate sim loops). */
-    this._animateGen = 0;
     this._inputFrozenSince = 0;
     this._countdownRunningSince = 0;
-  }
-
-  /** Start (or restart) the single gameplay render loop. */
-  _kickAnimateLoop() {
-    this._animateGen = (this._animateGen || 0) + 1;
-    this.animate();
-  }
-
-  _scheduleAnimateFrame() {
-    if (!this.isRunning) return;
-    const gen = this._animateGen || 0;
-    requestAnimationFrame(() => {
-      if (gen === (this._animateGen || 0)) this.animate();
-    });
   }
 
   _runGameplayWatchdogs(now) {
@@ -401,7 +385,7 @@ class Game {
        * Max simulation + render steps per second (0 = uncapped, use rAF + THREE.Clock). Reduces GPU/driver load on high-Hz panels.
        * Override with URL `?fps=120`, `?fps=30`, or `?fps=0` (uncapped).
        */
-      maxFps: 60,
+      maxFps: m ? 60 : 0,
       /**
        * Procedural arena CanvasTextures (see arena.js). Keep ≤512 on phone GPUs; FBX maps in /public/models
        * must be re-exported small in Blender — Three does not downscale embedded textures automatically.
@@ -718,7 +702,6 @@ class Game {
         );
         // #endregion
         this._glContextLost = true;
-        this._animateGen = (this._animateGen || 0) + 1;
         this.isRunning = false;
         this.clock.stop();
         this._mobileDbg?.mark('WEBGL_CONTEXT_LOST', 'stopping loop');
@@ -1416,7 +1399,6 @@ class Game {
   returnToTitle(opts = {}) {
     this.pauseMenuActive = false;
     this.ui.hidePauseMenu();
-    this._animateGen = (this._animateGen || 0) + 1;
     this._pendingBossAfterDare = false;
     this.bossEncounter?.reset();
     this.clockTowerEgg?.reset();
@@ -1485,7 +1467,7 @@ class Game {
     } else {
       this.player.controls.lock();
     }
-    this._kickAnimateLoop();
+    this.animate();
   }
 
   quitRunToTitleFromPause() {
@@ -1656,7 +1638,7 @@ class Game {
     this.player.inputFrozen = true;
     this.weapon.isHolding = false;
 
-    this._kickAnimateLoop();
+    this.animate();
     void this.runWaveCountdownThenStartWave();
   }
 
@@ -1756,7 +1738,7 @@ class Game {
     this.player.inputFrozen = true;
     this.weapon.isHolding = false;
 
-    this._kickAnimateLoop();
+    this.animate();
     void this.runWaveCountdownThenStartWave();
   }
 
@@ -2014,7 +1996,7 @@ class Game {
     this.player.inputFrozen = true;
     this.weapon.isHolding = false;
 
-    this._kickAnimateLoop();
+    this.animate();
     void this.runWaveCountdownThenStartWave();
   }
 
@@ -2636,11 +2618,8 @@ class Game {
 
     const skipFrameHidden = this.isMobile && typeof document !== 'undefined' && document.hidden;
 
-    if (this.isRunning) {
-      this._scheduleAnimateFrame();
-    }
-
     if (this.isRunning && this.waveClear?.active) {
+      requestAnimationFrame(() => this.animate());
       if (skipFrameHidden) return;
       const nowWc = performance.now();
       this._runGameplayWatchdogs(nowWc);
@@ -2680,6 +2659,8 @@ class Game {
       }
       return;
     }
+
+    requestAnimationFrame(() => this.animate());
 
     if (skipFrameHidden) return;
 
